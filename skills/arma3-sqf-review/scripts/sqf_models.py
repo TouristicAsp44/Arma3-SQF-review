@@ -124,9 +124,20 @@ def check_escalation_needed(raw_code: str, current_mode: str) -> str:
 
 
 def check_escalation_needed_for_files(files: dict[str, str] | list[Any], current_mode: str) -> str:
-    """Variante multi-archivo: el modo Micro exige un UNICO archivo autocontenido."""
+    """Escala fuera de Micro si el codigo cumple CUALQUIER criterio de exclusion de SKILL.md.
+
+    Un inventario VACIO no es un archivo limpio: no es 'Micro', es 'no se puede decidir'.
+    Se lanza ValueError para que la capa de arriba lo trate como NO VERIFICADO y no
+    como un veredicto. Un modo concedido por defecto sobre nada es un verde por omision.
+    """
     if current_mode != "Micro":
         return current_mode
+    if not files:
+        raise ValueError(
+            "Inventario vacio: no se encontraron archivos .sqf. No se puede decidir el modo "
+            "sobre cero archivos; un inventario vacio NO es 'Micro'. Revisa la ruta de --root "
+            "o indica los archivos concretos."
+        )
     if len(files) > 1:
         return "Estándar"
     if isinstance(files, dict):
@@ -145,6 +156,8 @@ def check_escalation_needed_for_files(files: dict[str, str] | list[Any], current
 
 def determine_escalation_reason(files: dict[str, str] | list[Any], mode: str) -> str:
     """Determina la causa exacta del escalado o de la permanencia en Micro."""
+    if not files:
+        return "Sin archivos .sqf detectados en la raíz analizada"
     if len(files) > 1:
         return f"Proyecto multi-archivo ({len(files)} archivos .sqf)"
     

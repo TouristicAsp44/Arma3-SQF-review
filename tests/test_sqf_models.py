@@ -44,3 +44,12 @@ def test_no_escalation_for_micro_file(tmp_path: Path):
     clean_file.write_text(clean_code, encoding="utf-8")
     result_files = check_escalation_needed_for_files([clean_file], current_mode="Micro")
     assert result_files == "Micro"
+
+
+def test_escalation_never_returns_micro_for_empty_inventory():
+    """Demuestra que check_escalation_needed_for_files lanza ValueError ante inventario vacío."""
+    with pytest.raises(ValueError, match="Inventario vacio"):
+        check_escalation_needed_for_files({}, current_mode="Micro")
+
+    with pytest.raises(ValueError, match="Inventario vacio"):
+        check_escalation_needed_for_files([], current_mode="Micro")
