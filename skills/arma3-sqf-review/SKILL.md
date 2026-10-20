@@ -29,12 +29,14 @@ El agente principal es el **orquestador**: único que decide, integra y entrega.
 ## Paso 0 — Perfil del Proyecto y Triage
 
 ### Perfil del Proyecto (declarado una sola vez y transmitido a todos los subagentes)
-Antes de clasificar el modo o despachar trabajo, el orquestador determina o valida los 5 parámetros del **Perfil del Proyecto**:
-- **Versión de Arma 3**: [p. ej. retail 2.22]
-- **Tipo de proyecto**: [Misión (Eden) | Addon]
+Antes de clasificar el modo o despachar trabajo, el orquestador determina o valida los **7 parámetros** del **Perfil del Proyecto**:
+- **ARMA_VERSION**: [p. ej. retail 2.22]
+- **DESTINO**: [mision | addon]   ← nombre único de este campo en todo el plugin
 - **CBA**: [sí (v3.19.0) | no]
 - **ACE3**: [sí (v3.21.2) | no]
-- **Modo**: [Micro | Estándar | Completo]
+- **SERVIDOR_DEDICADO**: [ruta o no]
+- **SQFLINT**: [ruta o no]
+- **MODO**: [Micro | Estándar | Completo]
 
 *Reglas de Framework CBA/ACE3*:
 1. **Con CBA (`CBA: sí`)**:
@@ -67,9 +69,9 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 6. **Carga y control del scheduler**: Bucles persistentes (`while`), esperas (`waitUntil`), handlers por frame (`onEachFrame`, `EachFrame`) o escaneos globales masivos (`allUnits`, `allMissionObjects`).
 → **ESCALA INMEDIATAMENTE a Estándar (o Completo)**. Ante la duda o ambigüedad, NUNCA usar Micro. Un proyecto grande jamás puede caer en Micro.
 
-**Señales de red** (grep): `remoteExec|remoteExecCall|publicVariable|setVariable\s*\[.*true|isServer|isDedicated|hasInterface|BIS_fnc_MP|addPublicVariableEventHandler|remoteExecutedOwner|setOwner|HeadlessClient|initServer|initPlayer`.
+- **Señales de red** (grep) — **este patrón es el mismo que aplica `sqf_models.check_escalation_needed`, no pueden divergir**: `remoteExec|remoteExecCall|publicVariable|publicVariableServer|publicVariableClient|setVariable\s*\[.*true|isServer|isDedicated|hasInterface|BIS_fnc_MP|addPublicVariableEventHandler|remoteExecutedOwner|setOwner|HeadlessClient|initServer|initPlayer`.
 
-**Señales de rendimiento** (grep): `while|waitUntil|EachFrame|onEachFrame|Draw3D|allUnits|allGroups|allMissionObjects|nearestObjects|nearEntities|createVehicle|createUnit|createGroup|addEventHandler|addMissionEventHandler|spawn|execVM`. Un script Micro con bucle persistente, handler por frame o escaneo global sube a Estándar.
+- **Señales de rendimiento** (grep) — **también debe cubrir `check_escalation_needed`**: `while|waitUntil|EachFrame|onEachFrame|Draw3D|allUnits|allGroups|allMissionObjects|nearestObjects|nearEntities|createVehicle|createUnit|createGroup|addEventHandler|addMissionEventHandler|spawn|execVM`. Un script Micro con bucle persistente, handler por frame o escaneo global sube a Estándar.
 
 - **Escalada**: si durante el trabajo se cruza un umbral, sube de modo y avisa en una línea. Nunca bajes.
 - **Override**: si el usuario pide un modo, se respeta (salvo Micro con señales de red: avisa del riesgo y escala).
@@ -81,7 +83,7 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 | Innovator | — | opcional (si se piden mecánicas nuevas o mejoras) | ✔ si es sistema nuevo o diseño de mecánicas |
 | Architect | — (checklist propio) | — (mini-plan de 5 líneas del orquestador) | ✔ |
 | Developer | — (escribe el orquestador) | opcional (si hay módulos independientes) | ✔ por módulo |
-| Wiki | solo comandos no triviales | ✔ (con caché) | ✔ (sobre el plan, antes de codificar) |
+| Verificación wiki (la hace el orquestador, no es un subagente) | solo comandos no triviales | ✔ (verificando en la Biki) | ✔ (sobre el plan, antes de codificar) |
 | Static analyzer | ✔ si hay archivo | ✔ si hay archivo | ✔ |
 | Config auditor | — | si hay red y raíz de proyecto (misión o addon) | ✔ |
 | Best-practices | 1 pasada: solo bloqueantes + máx. 3 sugerencias | ✔ | ✔ |
@@ -92,27 +94,27 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 
 **Micro** = 1–2 agentes, cero ceremonia, pero con el **checklist de autoverificación de dedicado** de `sqf-standards.md` aplicado estrictamente por el orquestador antes de entregar.
 - **Invariantes de Servidor Dedicado en Micro**: En Micro se mantienen rigurosamente todas las invariantes de dedicado: `player` jamás se utiliza sin verificar `hasInterface`, los comandos de interfaz UI (`hint`, `cutText`) se consideran inútiles o prohibidos en servidor, y jamás se permite `sleep` o `waitUntil` en contextos unscheduled.
-- **Análisis Estático Obligatorio**: Si hay archivo en disco, Micro ejecuta OBLIGATORIAMENTE `sqf-static-analyzer` (mediante `references/run_sqflint.py`). (Fallback global si falla la resolución de ruta: `C:\Users\Touri\.gemini\config\skills\arma3-sqf-review\references\run_sqflint.py`). Si `sqflint` no está disponible (`SQFLINT_NO_DISPONIBLE`), el análisis se reporta como `NO VERIFICADO` (NUNCA como PASA).
+- **Análisis Estático Obligatorio**: Si hay archivo en disco, Micro ejecuta OBLIGATORIAMENTE `sqf-static-analyzer` (mediante `references/run_sqflint.py`, ruta relativa a la raíz de esta skill). No uses rutas absolutas: la ubicación del plugin varía por máquina y por ámbito (workspace o global). Si la ruta relativa no resuelve, se deriva desde la raíz de la skill, nunca desde un caminho fijo. Si `sqflint` no está disponible (`SQFLINT_NO_DISPONIBLE`), el análisis se reporta como `NO VERIFICADO` (NUNCA como PASA).
 
 ## Flujo Completo
 
 1. **Contexto**: objetivo, perfil del proyecto, raíz de misión, máquina de ejecución, si hay archivo en disco. Si el objetivo es ambiguo, haz UNA pregunta al usuario; si no, asume y declara supuestos.
 1b. **Innovación** (Estándar/Completo si se piden mecánicas nuevas o mejoras creativas): `sqf-innovator` propone mecánicas viables aplicando los 4 filtros de viabilidad (ancho de banda de red, presupuesto de scheduler/frame, persistencia JIP e invariantes de dedicado) y separando ideas de implementaciones verificadas antes de fijar la arquitectura.
 2. **Diseño**: `sqf-architect` → Plan de desarrollo. El orquestador lo valida (¿cubre el objetivo? ¿contratos completos, incluyendo definición explícita de `CfgRemoteExec` para funciones remotas? ¿módulos con archivos disjuntos?).
-3. **Verificación previa (paralelo)**: wiki sobre los comandos del plan (caché primero, `references/wiki-cache.md`; navegador vía `/browser` solo lo que falte o tenga >6 meses) + `sqf-mission-config-auditor` (hechos de configuración y comprobación cruzada obligatoria de funciones invocadas remotamente contra la whitelist de `CfgRemoteExec`).
+3. **Verificación previa (paralelo)**: wiki sobre los comandos del plan + `sqf-mission-config-auditor` (hechos de configuración y comprobación cruzada obligatoria de funciones invocadas remotamente contra la whitelist de `CfgRemoteExec`).
+   **La caché NO es evidencia.** `references/wiki-cache.md` contiene entradas marcadas `NO VERIFICADO (memoria)`: son pistas, no hechos. Regla: todo comando no trivial se verifica contra la Biki (URL + fecha de consulta) ANTES de usarlo como hecho, y solo después se anota en la caché con su fecha. Si la herramienta de navegador no está disponible, el comando queda `NO VERIFICADO` — no se usa de memoria.
 4. **Implementación**: un `sqf-developer` por módulo, en paralelo (máx. 3 simultáneos). Cada uno recibe: su módulo, el contrato **completo**, hechos de wiki, `sqf-standards.md`. El contrato es inmutable: si un developer lo necesita cambiar, devuelve una *solicitud de cambio de contrato* y el orquestador decide.
 5. **Integración** (orquestador): interfaces coinciden con el contrato, orden de init, nombres de variables compartidas sin colisión.
 6. **Oleada de revisión (paralelo)**: static-analyzer, best-practices, locality y performance-auditor, con paquete de contexto.
 7. **Corrección** (máx. **3 iteraciones**): orden locality → performance → best-practices. Los arreglos de un archivo los hace su developer (o el orquestador si es trivial). Re-invoca al agente que señaló + static-analyzer siempre (`references/run_sqflint.py`) + best-practices si cambió estructura.
-   - **Definición precisa de Bloqueante (P0)**:
-     Cualquiera de los siguientes 7 tipos es un bloqueante estricto que reinicia el ciclo de corrección o detiene el flujo:
-     1. **Errores de sintaxis SQF**: Errores detectados determinísticamente por `run_sqflint.py` (exit code 1).
-     2. **Softlocks potenciales, bucles infinitos o bloqueos de init**: `waitUntil` sin condición alcanzable ni timeout de salvaguarda, esperas o bucles bloqueantes prolongados (`sleep`/`waitUntil`) en el flujo principal de `init.sqf`, `initServer.sqf` o `postInit` que congelan la carga de la misión (deben delegarse a `spawn` desacoplado o PFH), o esperas cruzadas cliente-servidor donde un nodo espera indefinidamente una variable nunca emitida.
-     3. **Violaciones críticas de dedicado**: Uso de `player` o `waitUntil {!isNull player}` en servidor dedicado (`isDedicated == true`), donde `player` es permanentemente `objNull`.
-     4. **Suspensión en contexto unscheduled**: `sleep`, `uiSleep` o `waitUntil` en contextos unscheduled (`canSuspend == false`): `preInit` (`preInit = 1`), Event Handlers (`addEventHandler`, `addMissionEventHandler`), `remoteExecCall` o funciones atómicas en `call`. Ambos (`sleep` y `uiSleep`) requieren obligatoriamente entorno scheduled (`canSuspend == true`).
-     5. **Violaciones de whitelist en `CfgRemoteExec`**: Invocaciones remotas (`remoteExec`, `remoteExecCall`) de funciones no declaradas en la whitelist de `CfgRemoteExec` cuando `mode = 1`.
-     6. **Contratos de interfaz rotos o parámetros incompatibles**: Desajustes en tipos, orden o cantidad de argumentos en `params` entre módulos o llamadas de función.
-     7. **Inyección no permitida de dependencias de framework**: Uso de funciones o identificadores de CBA o ACE3 (`CBA_fnc_*`, `ace_*`) cuando el perfil del proyecto no las declara (`CBA: no` o `ACE3: no`).
+   - **Definición precisa de Bloqueante (P0)** — esta es la ÚNICA definición normativa; no la dupliques en otra sección, refiérela:
+     1. **Errores de sintaxis SQF**: errores detectados determinísticamente por `references/run_sqflint.py` (exit code 1) **o variables locales fugadas al scope exterior sin `private`/`params`**. *(Nota: comandos no reconocidos por sqflint se tratan como Sugerencia/Pista a confirmar contra el Biki antes de tratarlos como error. Un warning de scope de sqflint cuenta como BLOQUEANTE, no como sugerencia.)*
+     2. **Softlocks potenciales, bucles infinitos o bloqueos de init**: `waitUntil` sin condición alcanzable garantizada ni timeout de seguridad, bucles infinitos sin cadencia (`while {true}` sin suspensión o PFH), retrasos bloqueantes prolongados (`sleep`/`uiSleep`/`waitUntil`) en el hilo principal de scripts de inicialización (`init.sqf`, `initServer.sqf`, `postInit`) que congelan la carga de la misión (deben delegarse a `spawn` desacoplado o PFH), o esperas cruzadas cliente-servidor donde un nodo espera indefinidamente una variable nunca emitida.
+     3. **Violaciones críticas de dedicado**: uso de `player` o `waitUntil {!isNull player}` en servidor dedicado (`isDedicated == true`), donde `player` es permanentemente `objNull`; **o ejecución de comandos de interfaz UI (`hint`, `hintC`, `titleText`, `cutText`, `dialog`, `createDialog`, `ctrlCreate`, `displayCtrl`, `findDisplay`, `uiNamespace`, `ppEffect`) en cualquier ruta que pueda ejecutarse en el servidor** — una guarda `if (hasInterface)` NO lo legitima: solo evita el error, no el trabajo inútil. La retroalimentación visual va por `remoteExec` al cliente.
+     4. **Suspensión en contexto unscheduled**: `sleep`, `uiSleep` o `waitUntil` donde `canSuspend == false` (`preInit` con `preInit = 1`, Event Handlers del motor, `remoteExecCall`, o código invocado desde un contexto unscheduled). **Ambos** (`sleep` y `uiSleep`) requieren obligatoriamente entorno scheduled.
+     5. **Violaciones de whitelist en `CfgRemoteExec`**: invocaciones remotas (`remoteExec`, `remoteExecCall`) de funciones ausentes de la lista blanca de `CfgRemoteExec >> Functions` cuando `mode = 1`.
+     6. **Contratos de interfaz rotos o parámetros incompatibles**: discrepancias en cantidad, orden o tipos de datos requeridos en `params` entre módulos o llamadas de función.
+     7. **Inyección no permitida de dependencias de framework**: uso de funciones o identificadores de CBA o ACE3 (`CBA_fnc_*`, `ace_*`) cuando el perfil del proyecto declara `CBA: no` o `ACE3: no`.
    - **PUERTA DE CALIDAD INFRANQUEABLE**:
      - Si tras **3 iteraciones** todavía queda **AL MENOS UN BLOQUEANTE** abierto:
        1. **DETENER** el proceso de forma inmediata.
@@ -124,16 +126,18 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 10. **Entrega**: Aplicación del checklist de salida completo (`references/checklist-entrega.md`) y generación obligatoria del informe de estados por ítem.
 
 **Estándar** = pasos 1, 3 (sin config si no aplica), 4 (orquestador o developers opcionales), 6, 7, y 8–9 según la tabla, con validación de `references/checklist-entrega.md` en el paso 10.
-**Micro** = escribir → checklist de invariantes de dedicado (`sqf-standards.md` y `references/checklist-entrega.md`) → `sqf-static-analyzer` (obligatorio si hay archivo, mediante `references/run_sqflint.py`) → 1 pasada de `sqf-best-practices-reviewer` → generar informe obligatorio de estados por ítem (`PASA` / `NO PASA` / `NO VERIFICADO`) → entregar (únicamente si CERO bloqueantes).
+**Micro** = escribir → checklist de invariantes de dedicado (`sqf-standards.md` y `references/checklist-entrega.md`) → `sqf-static-analyzer` (obligatorio si hay archivo, mediante `references/run_sqflint.py`) → `sqf-best-practices-reviewer` → **ciclo de corrección (máx. 3 iteraciones, igual que el modo Estándar)**: si la pasada reporta un BLOQUEANTE, se corrige y se vuelve a pasar `sqf-best-practices-reviewer` + `sqf-static-analyzer`; al alcanzar 3 iteraciones con un BLOQUEANTE abierto se aplica la PUERTA DE CALIDAD INFRANQUEABLE (`DETENIDO (NO PASA)`, sin entrega) → generar informe obligatorio de estados por ítem (`PASA` / `NO PASA` / `NO VERIFICADO`) → entregar (únicamente si CERO bloqueantes).
 
 ## Paquete de contexto (formato de traspaso a cualquier subagente)
 
 ```
 PERFIL:
   ARMA_VERSION: <ej. 2.22>
-  TIPO: <mision | addon>
+  DESTINO: <mision | addon>
   CBA: <si (v3.19.0) | no>
   ACE3: <si (v3.21.2) | no>
+  SERVIDOR_DEDICADO: <ruta o no>
+  SQFLINT: <ruta o no>
   MODO: <Micro | Estándar | Completo>
 MODO: Micro|Estándar|Completo
 OBJETIVO: <1-3 líneas>
@@ -165,14 +169,7 @@ Un agente que ve algo ajeno lo anota en una línea: "derivado a <agente>".
 
 ## Rúbrica de Severidad y Puerta de Calidad
 
-- **Bloqueante**: Defecto crítico que impide la compilación o ejecución, viola las invariantes de servidor dedicado, produce desincronización de red, satura el scheduler o cuelga hilos de ejecución. Se definen exhaustivamente las **7 categorías de bloqueante (P0)**:
-  1. **Errores de sintaxis SQF**: Errores detectados determinísticamente por `references/run_sqflint.py` (código de salida 1: paréntesis/llaves desbalanceadas, comillas sin cerrar, sintaxis inválida, operadores erróneos) o variables locales fugadas al scope exterior sin `private`/`params`. *(Nota: Comandos no reconocidos por sqflint se tratan como Sugerencia/Pista a confirmar contra el Biki antes de tratarlos como error)*.
-  2. **Softlocks potenciales, bucles infinitos o bloqueos de init**: `waitUntil` sin condición alcanzable garantizada ni timeout de seguridad, bucles infinitos sin cadencia (`while {true}` sin suspensión o PFH), retrasos bloqueantes prolongados (`sleep`/`waitUntil`) en el hilo principal de scripts de inicialización (`init.sqf`, `initServer.sqf`, `postInit`) que congelan la pantalla de carga de los clientes (deben desacoplarse a `spawn` o PFH), o esperas cruzadas cliente-servidor donde un nodo espera indefinidamente una variable nunca emitida o sincronizada.
-  3. **Violaciones críticas de dedicado**: Uso de `player` o `waitUntil {!isNull player}` en servidor dedicado (`isDedicated == true`), donde `player` es permanentemente `objNull`, o ejecución de comandos de interfaz UI (`hint`, `titleText`, `cutText`, creación de diálogos) en servidor dedicado sin guarda `hasInterface`.
-  4. **Suspensión en contexto unscheduled**: Uso de `sleep`, `uiSleep` o `waitUntil` en contextos unscheduled o atómicos (`canSuspend == false`): funciones con `preInit = 1`, Event Handlers del motor (`addEventHandler`, `addMissionEventHandler`), llamadas mediante `remoteExecCall` o código ejecutado dentro de `call`. Ambos (`sleep` y `uiSleep`) requieren obligatoriamente entorno scheduled (`canSuspend == true`).
-  5. **Violaciones de whitelist en `CfgRemoteExec`**: Invocaciones remotas (`remoteExec`, `remoteExecCall`) de funciones ausentes de la lista blanca de `CfgRemoteExec` cuando `mode = 1` en `description.ext`.
-  6. **Contratos de interfaz rotos o parámetros incompatibles**: Discrepancias en cantidad, orden o tipos de datos requeridos en `params` entre módulos o llamadas de función del sistema.
-  7. **Inyección no permitida de dependencias de framework**: Uso de funciones o identificadores de CBA o ACE3 (`CBA_fnc_*`, `ace_*`) cuando el perfil del proyecto declara `CBA: no` o `ACE3: no`.
+- **Bloqueante (P0)**: ver la definición normativa en el Paso 7 ("Definición precisa de Bloqueante (P0)"). Esa lista es la única fuente; cualquier cambio se hace allí y se referencia desde aquí. Resumen: sintaxis y fugas de scope, softlocks y bloqueos de init, violaciones de dedicado (incluida UI en rutas de servidor), suspensión en unscheduled, whitelist `CfgRemoteExec`, contratos de interfaz rotos, dependencias de framework no autorizadas.
 - **Sugerencia**:
   Cuestiones de estilo, legibilidad, nomenclatura secundaria, micro-optimizaciones que no corrigen un bug activo, sugerencias de refactorización opcional.
 - **Regla del ciclo**:
@@ -191,7 +188,7 @@ No, si es un helper interno, un fix, o un script Micro (basta la cabecera coment
 Ningún modo puede declarar el trabajo como "terminado" ni entregar código como definitivo sin verificar contra el checklist de entrega (`references/checklist-entrega.md`, bloques A a I) e incluir el **Informe Desglosado de Estados por Ítem** con evaluación estricta: `PASA` / `NO PASA` / `NO VERIFICADO`.
 - Si existe al menos un ítem obligatorio en estado `NO PASA` (bloqueante), la entrega se RECHAZA automáticamente, el proceso se DETIENE de forma inmediata y se solicita intervención humana.
 - Estados formales permitidos por ítem: `PASA`, `NO PASA`, `NO VERIFICADO` (y `NO APLICA` únicamente si el componente no aplica al modo).
-- **Principio de Honestidad Técnica (Invariante de Entorno)**: Dado que NO existe un ejecutable local de servidor dedicado (`Arma3Server`) ni compilador de máquina virtual (`sqfvm`), los ítems correspondientes a ejecución real en servidor dedicado permanecen OBLIGATORIAMENTE en estado `NO VERIFICADO`. La skill y todos los informes deben declararlo explícitamente y nunca asegurar haber probado en servidor dedicado si no se ha ejecutado.
+- **Principio de Honestidad Técnica (Invariante de Entorno)**: los ítems correspondientes a ejecución real en servidor dedicado (ítem 10) se marcan `NO VERIFICADO` **salvo que el Perfil del Proyecto declare que el entorno existe y se haya ejecutado**. El Perfil incorpora dos parámetros: `SERVIDOR_DEDICADO: <ruta o no>` y `SQFLINT: <ruta o no>`. Si no están declarados, el ítem es `NO VERIFICADO` por definición y la skill y todos los informes deben declararlo explícitamente. Nunca se afirma haber probado en servidor dedicado si no se ha ejecutado en esta máquina, en esta sesión.
 - Si `sqflint` no está disponible (`SQFLINT_NO_DISPONIBLE`), el análisis estático de `run_sqflint.py` se reporta obligatoriamente como `NO VERIFICADO` (JAMÁS como PASA).
 
 ### Criterios de Entrega según Destino (Misión vs Addon)
@@ -232,22 +229,13 @@ La entrega y validación estructural deben ajustarse estrictamente al valor de `
 
 Luego: código final (solo si Estado global es PASA), sugerencias no bloqueantes y plan de prueba manual (Completo / Estándar).
 
-## Validación de la Puerta de Calidad (Caso Simulado T09 — Estado: LEÍDO)
+## Validación de la Puerta de Calidad (T09 — diseño del gate)
 
-La regla de detención obligatoria tras 3 iteraciones con bloqueantes abiertos se valida formalmente mediante el caso de prueba simulado T09:
-- **Identificador de Caso**: T09 (Puerta de calidad: Parada inmediata tras 3 iteraciones con bloqueantes).
-- **Estado de Evidencia**: **LEÍDO** (prueba simulada de diseño lógico del flujo del orquestador; clasificada explícitamente como estado `LEÍDO`, NO VERIFICADO en runtime, debido a la ausencia de ejecutable de servidor dedicado en la máquina local).
-- **Escenario de simulación**:
-  1. *Entrada*: Función invocada en Event Handler (`addEventHandler ["Killed", { [_this] call TAG_fnc_handleKilled; }];`) donde `TAG_fnc_handleKilled` contiene `sleep 2;`.
-  2. *Iteración 1*: `sqf-locality-auditor` emite `[BLOQUEANTE 4] Suspensión en unscheduled: sleep en Event Handler`. El desarrollador intenta sustituir por `waitUntil { time > _timeout }` (sin spawn). Contador = 1.
-  3. *Iteración 2*: `sqf-locality-auditor` re-audita y detecta que `waitUntil` también viola unscheduled (`[BLOQUEANTE 4] waitUntil en unscheduled`). El desarrollador envuelve en `spawn`, pero introduce un error de sintaxis SQF detectable por `run_sqflint.py` (exit code 1). `sqf-static-analyzer` emite `[BLOQUEANTE 1] Error sintáctico en run_sqflint.py`. Contador = 2.
-  4. *Iteración 3*: Se corrige la sintaxis pero el desarrollador altera los argumentos esperados en `params` rompiendo la compatibilidad entre módulos (`[BLOQUEANTE 6] Parámetros incompatibles en contrato de interfaz`). Al finalizar la revisión de la iteración 3, permanece 1 bloqueante abierto. Contador = 3.
-  5. *Evaluación de la Puerta (Paso 7)*:
-     - Condición evaluada: `iteraciones >= 3 && bloqueantes_abiertos > 0`.
-     - Acción del Orquestador: **DETENER INMEDIATAMENTE (DETENER)**. Emite `ESTADO: DETENIDO (NO PASA) TRAS 3 ITERACIONES`.
-     - Reporta desglose pormenorizado del bloqueante abierto y solicita intervención humana al usuario.
-     - **PROHIBIDO DECLARAR "TERMINADO" O ENTREGAR COMO FINAL**. Se cancela la entrega y no se avanzan a los pasos 8, 9 ni 10.
-- **Resultado del Caso**: Bloqueo y detención garantizados. Código con bloqueantes jamás se promueve a producción ni se entrega como final. Estado: **LEÍDO**.
+La regla de detención obligatoria tras 3 iteraciones con bloqueantes abiertos está implementada en `scripts/sqf_orchestrator.py` (condición `iteraciones >= 3 && bloqueantes_abiertos > 0` → `DETENER` + `ESTADO: DETENIDO (NO PASA)` + estado fallido + salida con código 1).
+
+**Estado: NO VERIFICADO en runtime.** La verificación de esta puerta es un test unitario del orquestador (`tests/test_orchestrator_loop.py`), que debe estar presente y en verde en el paquete del plugin. Si ese test no está o no pasa, esta sección declara: `PUERTA DE CALIDAD SIN TEST ADJUNTO — NO VERIFICADA`.
+
+**Consecuencia práctica:** si en algún momento el orquestador no está disponible, el gate sigue aplicando en prosa (Paso 7, "PUERTA DE CALIDAD INFRANQUEABLE") y el resultado se marca `NO VERIFICADO` en la puerta, nunca `PASA`.
 
 ## Limitaciones
 

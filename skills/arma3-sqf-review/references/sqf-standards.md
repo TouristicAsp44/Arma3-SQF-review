@@ -24,6 +24,7 @@ Lo usan developer (para escribir), reviewers (para revisar) y orquestador (check
    - Fuente oficial: https://community.bistudio.com/wiki/Arma_3:_CfgRemoteExec (consultado 2026-10-03: VERIFICADO).
 9. Sin `diag_log`/debug residual en la entrega (o tras una macro/flag `TAG_debug`).
 10. Rendimiento: bucles persistentes con cadencia y condición de salida; sin escaneos globales (`allUnits`, `allMissionObjects`, `nearestObjects` grandes) dentro de bucles o EH frecuentes; `pushBack` en vez de `_a = _a + [x]`; guardar el handle de todo `spawn` de larga vida; todo `addEventHandler` y objeto/grupo creado tiene su limpieza.
+11. Interfaz en servidor dedicado: los comandos de interfaz, hint, hintC, titleText, cutText, dialog, createDialog, ctrlCreate, displayCtrl, findDisplay, uiNamespace, ppEffect y afines, no se usan en ninguna ruta que pueda ejecutarse en el servidor, y una guarda if hasInterface no los legitima, porque la guarda solo evita el error y no el trabajo inutil. Si hace falta retroalimentacion visual, va por remoteExec al cliente.
 
 ## Cabecera de función (BI-style, en español)
 ```
@@ -75,6 +76,7 @@ El código debe adaptarse estrictamente al **Perfil del Proyecto** (`CBA: sí/no
 
 ## Checklist de autoverificación (modo Micro, obligatorio antes de entregar)
 - [ ] Todas las locales con `private`/`params`; params tipados si es función.
+- [ ] Sin comandos de interfaz en rutas de servidor, ni siquiera con guarda hasInterface.
 - [ ] Sin `sleep`/`uiSleep`/`waitUntil` en contexto unscheduled (`preInit`, EHs, `remoteExecCall`).
 - [ ] Sin `sleep` o esperas bloqueantes prolongadas en el hilo principal de `init.sqf`, `initServer.sqf` o `postInit`.
 - [ ] Respetar perfil CBA/ACE3: sin dependencias silenciosas de `CBA_fnc_*` o `ace_*` si `CBA: no`; uso de PFH/eventos si `CBA: sí`.

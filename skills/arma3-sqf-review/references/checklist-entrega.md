@@ -19,7 +19,7 @@ Cada punto de control debe evaluarse de forma determinista y honesta bajo uno de
 
 ### Bloque A: Compilación y Sintaxis
 - [ ] **A.1 Parseo determinista**: El código analizado con `references/run_sqflint.py` finaliza con código de salida `0` (`SIN ERRORES`). Cero errores sintácticos de comillas, llaves o puntos y coma.
-- [ ] **A.2 Compatibilidad de versión**: Todos los comandos SQF utilizados están soportados y vigentes en Arma 3 v2.22 retail.
+- [ ] **A.2 Compatibilidad de versión**: Todos los comandos SQF utilizados están soportados y vigentes según la versión declarada en el Perfil del Proyecto (ARMA_VERSION).
 - [ ] **A.3 Ausencia de comandos obsoletos**: Prohibido el uso de primitivas obsoletas de red o scripting (p. ej., `BIS_fnc_MP`, reemplazado por `remoteExec`/`remoteExecCall`).
 - [ ] **A.4 Resolución de directivas e inclusión**: Todas las directivas `#include`, `#define` y rutas relativas resuelven archivos existentes sin enlaces rotos ni dependencias locales del autor.
 
@@ -27,7 +27,7 @@ Cada punto de control debe evaluarse de forma determinista y honesta bajo uno de
 - [ ] **B.1 Arranque headless y RPT limpio**: No existen errores de script ni warnings de pre-inicialización al cargar en un servidor dedicado sin interfaz humana.
 - [ ] **B.2 Aislamiento de entidad `player`**: Cero referencias a la variable `player` en hilos exclusivos del servidor (`isDedicated == true`), donde `player` devuelve permanentemente `objNull`.
 - [ ] **B.3 Prohibición de softlock por espera de jugador**: NUNCA utilizar `waitUntil {!isNull player}` en `initServer.sqf` o en funciones exclusivas del servidor (provoca bloqueo infinito del arranque).
-- [ ] **B.4 Guardas de interfaz humana**: Comandos de UI (`hint`, `cutText`, `titleText`, `playMusic`) encapsulados con guardas `if (hasInterface) then { ... }` para evitar llamadas inútiles en servidor o Headless Client.
+- [ ] **B.4 Interfaz en servidor dedicado**: Los comandos de interfaz (`hint`, `hintC`, `titleText`, `cutText`, `dialog`, `createDialog`, `ctrlCreate`, `displayCtrl`, `findDisplay`, `uiNamespace`, `ppEffect` y afines) no se usan en ninguna ruta que pueda ejecutarse en el servidor, y una guarda `if (hasInterface)` no los legitima. Si hace falta retroalimentación visual, va por `remoteExec` al cliente.
 - [ ] **B.5 Prohibición de suspensión en unscheduled**: Cero llamadas a `sleep`, `uiSleep` o `waitUntil` en contextos unscheduled (`preInit`, Event Handlers del motor, `remoteExecCall`).
 - [ ] **B.6 Acotamiento de `waitUntil`**: Todo `waitUntil` implementa cadencia de verificación y condición de salida por tiempo límite (timeout) para evitar hilos colgados.
 
