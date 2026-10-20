@@ -37,11 +37,16 @@ def parse_sqflint_output(rc: int, stdout: str) -> list[SQFFinding]:
         )]
 
     findings: list[SQFFinding] = []
+    seen: set[tuple[str, int, str]] = set()
     pattern = re.compile(r'^(.*?):(\d+):\s*(error|warning):\s*(.*)$', re.IGNORECASE)
     for line_text in stdout.splitlines():
         match = pattern.match(line_text.strip())
         if match:
             file_path, line_num, level, msg = match.groups()
+            key = (file_path, int(line_num), msg)
+            if key in seen:
+                continue
+            seen.add(key)
             is_scope = bool(SCOPE_WARNING_RE.search(msg))
             if level.lower() == "error" or is_scope:
                 severity = "BLOQUEANTE"

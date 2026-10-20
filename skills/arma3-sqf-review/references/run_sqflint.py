@@ -180,10 +180,10 @@ def main(argv=None):
                 file_lines.append(line)
                 normalized = parse_error_line(f, line)
                 file_lines[-1] = normalized
-                if ":error:" in normalized.lower() or ":warning:" in normalized.lower():
+                if re.search(r":\s*error:", normalized, re.IGNORECASE) or re.search(r":\s*warning:", normalized, re.IGNORECASE):
                     error_lines.append(normalized)
 
-        has_error = (rc != 0) or any(":error:" in l.lower() for l in file_lines)
+        has_error = (rc != 0) or any(re.search(r":\s*error:", l, re.IGNORECASE) for l in file_lines)
         if has_error:
             total_with_errors += 1
             status_tag = f"ERRORES (exit {rc})"
@@ -202,7 +202,7 @@ def main(argv=None):
             for l in lines:
                 print(f"  {l}")
         # Las advertencias se listan aparte para que el consumidor no las confunda con "sin problemas".
-        warnings_only = [e for e in error_lines if ":warning:" in e.lower()]
+        warnings_only = [e for e in error_lines if re.search(r":\s*warning:", e, re.IGNORECASE)]
         if warnings_only:
             print(f"\n--- ADVERTENCIAS (archivo:línea) ---")
             for w in warnings_only:
