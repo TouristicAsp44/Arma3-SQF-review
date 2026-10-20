@@ -1,6 +1,6 @@
 import re
-from pydantic import BaseModel
 from typing import Literal
+from pydantic import BaseModel
 
 class SQFFinding(BaseModel):
     severity: Literal["BLOQUEANTE", "SUGERENCIA", "NO_VERIFICADO"]
@@ -10,68 +10,129 @@ class SQFFinding(BaseModel):
     evidence: str
     discipline: str
 
+# Advertencias de scope de sqflint: "Local variable \"_x\" is not from this scope (not private)"
+# El linter las reporta como warning, no como error, asi que con rc==0 el codigo previously
+# las descartaba. SKILL.md declara esa misma categoria como BLOQUEANTE (P0), de modo que
+# el mapeo se hace por patron estable y no por texto libre.
+SCOPE_WARNING_RE = re.compile(
+    r"not from this scope|not private|is not defined but was used",
+    re.IGNORECASE,
+)
+
+
 def parse_sqflint_output(rc: int, stdout: str) -> list[SQFFinding]:
-    if rc == 0:
-        return []
     if rc == 2:
         raise ValueError(f"Error de uso de sqflint (rc=2): {stdout.strip()}")
+    # NOTA: ya no hay retorno temprano para rc == 0. Un rc == 0 significa "sin errores de
+    # sintaxis", no "sin hallazgos": las advertencias de scope siguen siendo hallazgos.
 
-    if rc == 1:
-        if "Excepción al ejecutar sqflint" in stdout:
-            return [SQFFinding(
-                severity="NO_VERIFICADO",
-                file="desconocido",
-                line=0,
-                description="El linter fue bloqueado por el sistema o no se pudo ejecutar",
-                evidence=stdout.strip(),
-                discipline="Sistema"
-            )]
+    if "Excepción al ejecutar sqflint" in stdout or "TIMEOUT EXPIRED" in stdout:
+        return [SQFFinding(
+            severity="NO_VERIFICADO",
+            file="desconocido",
+            line=0,
+            description="El linter fue bloqueado, no se pudo ejecutar o supero el tiempo limite",
+            evidence=stdout.strip(),
+            discipline="Sistema"
+        )]
 
-        findings: list[SQFFinding] = []
-        pattern = re.compile(r'^(.*?):(\d+):\s*(error|warning):\s*(.*)$', re.IGNORECASE)
-        for line_text in stdout.splitlines():
-            match = pattern.match(line_text.strip())
-            if match:
-                file_path, line_num, level, msg = match.groups()
-                severity = "BLOQUEANTE" if level.lower() == "error" else "SUGERENCIA"
-                findings.append(SQFFinding(
-                    severity=severity,
-                    file=file_path,
-                    line=int(line_num),
-                    description=msg,
-                    evidence=line_text,
-                    discipline="Sintaxis"
-                ))
-        if not findings:
+    findings: list[SQFFinding] = []
+    pattern = re.compile(r'^(.*?):(\d+):\s*(error|warning):\s*(.*)$', re.IGNORECASE)
+    for line_text in stdout.splitlines():
+        match = pattern.match(line_text.strip())
+        if match:
+            file_path, line_num, level, msg = match.groups()
+            is_scope = bool(SCOPE_WARNING_RE.search(msg))
+            if level.lower() == "error" or is_scope:
+                severity = "BLOQUEANTE"
+            else:
+                severity = "SUGERENCIA"
             findings.append(SQFFinding(
-                severity="BLOQUEANTE",
-                file="desconocido",
-                line=0,
-                description="Error de sintaxis o formato no reconocido del linter (rc=1)",
-                evidence=stdout,
-                discipline="Sintaxis"
+                severity=severity,
+                file=file_path,
+                line=int(line_num),
+                description=msg,
+                evidence=line_text,
+                discipline="Scope" if is_scope else "Sintaxis"
             ))
-        return findings
 
-    return [SQFFinding(
-        severity="NO_VERIFICADO",
-        file="desconocido",
-        line=0,
-        description=f"Fallo del linter o rc desconocido (rc={rc})",
-        evidence=stdout,
-        discipline="Sintaxis"
-    )]
+    if not findings and rc not in (0, 1):
+        findings.append(SQFFinding(
+            severity="NO_VERIFICADO",
+            file="desconocido",
+            line=0,
+            description=f"Fallo del linter o rc desconocido (rc={rc})",
+            evidence=stdout,
+            discipline="Sintaxis"
+        ))
+    elif not findings and rc == 1:
+        findings.append(SQFFinding(
+            severity="BLOQUEANTE",
+            file="desconocido",
+            line=0,
+            description="Error de sintaxis o formato no reconocido del linter (rc=1)",
+            evidence=stdout,
+            discipline="Sintaxis"
+        ))
+    return findings
 
 
 def strip_comments_and_strings(code: str) -> str:
     pattern = r'/\*[\s\S]*?\*/|//.*|"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\''
-    # Reemplazar con ESPACIO
     return re.sub(pattern, ' ', code)
 
+
+# Estos dos patrones deben ser IDENTICOS a los de SKILL.md lineas 70 y 72.
+# Si divergen, el codigo deja de detectar lo que la skill prohibe en modo Micro.
+NETWORK_SIGNALS_RE = re.compile(
+    r"\b(remoteExec|remoteExecCall|publicVariable|publicVariableServer|publicVariableClient"
+    r"|addPublicVariableEventHandler|remoteExecutedOwner|setOwner|BIS_fnc_MP|isDedicated"
+    r"|isServer|hasInterface|HeadlessClient)\b"
+    r"|setVariable\s*\[.*true",
+    re.IGNORECASE,
+)
+
+PERFORMANCE_SIGNALS_RE = re.compile(
+    r"\b(while|waitUntil|EachFrame|onEachFrame|Draw3D|allUnits|allGroups|allMissionObjects"
+    r"|nearestObjects|nearEntities|createVehicle|createUnit|createGroup|addEventHandler"
+    r"|addMissionEventHandler|spawn|execVM)\b",
+    re.IGNORECASE,
+)
+
+LIFECYCLE_SIGNALS_RE = re.compile(
+    r"init\.sqf|initServer\.sqf|initPlayerLocal\.sqf|initPlayerServer\.sqf"
+    r"|description\.ext|config\.cpp|CfgRemoteExec|CfgFunctions",
+    re.IGNORECASE,
+)
+
+
 def check_escalation_needed(raw_code: str, current_mode: str) -> str:
-    if current_mode != "Micro": return current_mode
+    """Escala fuera de Micro si el codigo cumple CUALQUIER criterio de exclusion de SKILL.md."""
+    if current_mode != "Micro":
+        return current_mode
     clean_code = strip_comments_and_strings(raw_code)
-    network_pattern = re.compile(r'\b(remoteExec|remoteExecCall|publicVariable|publicVariableServer|publicVariableClient)\b', re.IGNORECASE)
-    if network_pattern.search(clean_code):
-         return "Estándar"
+    if (NETWORK_SIGNALS_RE.search(clean_code)
+            or PERFORMANCE_SIGNALS_RE.search(clean_code)
+            or LIFECYCLE_SIGNALS_RE.search(clean_code)):
+        return "Estándar"
+    return current_mode
+
+
+def check_escalation_needed_for_files(files: dict[str, str] | list[Any], current_mode: str) -> str:
+    """Variante multi-archivo: el modo Micro exige un UNICO archivo autocontenido."""
+    if current_mode != "Micro":
+        return current_mode
+    if len(files) > 1:
+        return "Estándar"
+    if isinstance(files, dict):
+        for raw in files.values():
+            if check_escalation_needed(raw, current_mode) != "Micro":
+                return "Estándar"
+    else:
+        for f in files:
+            from pathlib import Path
+            p = Path(f)
+            raw = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else str(f)
+            if check_escalation_needed(raw, current_mode) != "Micro":
+                return "Estándar"
     return current_mode
