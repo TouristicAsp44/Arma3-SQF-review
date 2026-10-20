@@ -8,6 +8,31 @@ from sqf_models import SQFFinding, format_findings_report
 from sqf_orchestrator import mode_query, run_lint, run_orchestrator
 
 
+def test_mode_query_refuses_empty_inventory(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    """Sobre un directorio sin .sqf, --mode-query sale con 10, imprime NO VERIFICADO y no dice MODO: Micro."""
+    empty_dir = tmp_path / "empty_project"
+    empty_dir.mkdir()
+
+    rc = mode_query(root=str(empty_dir))
+    assert rc == 10
+    captured = capsys.readouterr().out
+    assert "NO VERIFICADO" in captured
+    assert "MODO: Micro" not in captured
+    assert "MODO: Estándar" not in captured
+
+
+def test_lint_mode_refuses_empty_inventory(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    """--lint sobre un directorio sin .sqf sale con 10 y no_verificado=1, no con bloqueantes=0 exit 0."""
+    empty_dir = tmp_path / "empty_project_lint"
+    empty_dir.mkdir()
+
+    rc = run_lint(target=str(empty_dir))
+    assert rc == 10
+    captured = capsys.readouterr().out
+    assert "no_verificado=1" in captured
+    assert "NO VERIFICADO" in captured
+
+
 def test_mode_query_returns_estandar_for_network_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     """--mode-query sobre un archivo con remoteExec devuelve Estándar."""
     net_file = tmp_path / "fn_network.sqf"

@@ -58,7 +58,8 @@ python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz del pro
 *(Nota: `<raíz del proyecto>` es la carpeta del proyecto SQF bajo revisión, nunca la raíz del plugin. Códigos de salida del script: `0` = cálculo exitoso, `1` = error duro de ruta o argumentos, `10` = completado con `NO VERIFICADO`).*
 
 El script analiza el inventario de archivos `.sqf` del proyecto y emite el informe estructurado (`MODO: ...`, `MOTIVO: ...`, `RESUMEN: modo=...; escalado=...`).
-**Fallback obligatorio:** Si el script no está disponible o falla su invocación, el modo por defecto es `Estándar` y se declara `NO VERIFICADO` en el informe; **NUNCA se clasifica como Micro por criterio manual**.
+**Inventario vacío:** Si el script devuelve `NO VERIFICADO` por inventario vacío (cero archivos `.sqf` encontrados), **el modo no se decide y hay que preguntar la ruta**. Un modo nunca se concede por defecto ante un inventario vacío; un resultado vacío no es un resultado limpio ni es Micro.
+**Fallback obligatorio:** Si el script no está disponible o falla su invocación por causas del entorno, el modo por defecto es `Estándar` y se declara `NO VERIFICADO` en el informe; **NUNCA se clasifica como Micro por criterio manual**.
 
 | Modo | Criterio determinista del script |
 |---|---|

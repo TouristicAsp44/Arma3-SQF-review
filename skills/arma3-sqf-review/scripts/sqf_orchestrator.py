@@ -324,7 +324,15 @@ def mode_query(root: Optional[str] = None) -> int:
         except Exception:
             pass
 
-    mode = check_escalation_needed_for_files(sqf_files, "Micro")
+    try:
+        mode = check_escalation_needed_for_files(sqf_files, "Micro")
+    except ValueError as exc:
+        print("ESTADO: NO VERIFICADO")
+        print(str(exc))
+        print("No se decide ningun modo. Revisa la ruta de --root: el modo mas permisivo")
+        print("no se concede por defecto ante un inventario vacio.")
+        return 10
+
     reason = determine_escalation_reason(sqf_files, mode)
     print(summarize_escalation(mode, reason))
     return 0
@@ -340,6 +348,18 @@ def run_lint(
     if not os.path.exists(resolved_target):
         print(f"ERROR: La ruta '{resolved_target}' no existe.", file=sys.stderr)
         return 1
+
+    if os.path.isdir(resolved_target):
+        has_sqf = False
+        for _, _, f_names in os.walk(resolved_target):
+            if any(f.lower().endswith(".sqf") for f in f_names):
+                has_sqf = True
+                break
+        if not has_sqf:
+            print("[NO_VERIFICADO] 0: (Sistema): no se encontraron archivos .sqf; el analisis no se ejecuto")
+            print("RESUMEN: bloqueantes=0; sugerencias=0; no_verificado=1")
+            print("ESTADO: NO VERIFICADO")
+            return 10
 
     resolved_linter = (
         os.path.abspath(str(linter_executable))
