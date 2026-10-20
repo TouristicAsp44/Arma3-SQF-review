@@ -49,32 +49,29 @@ Antes de clasificar el modo o despachar trabajo, el orquestador determina o vali
    - Usar exclusivamente alternativas vanilla (`spawn { while {...} do { sleep ...; }; }` con salida controlada, `addMissionEventHandler ["EachFrame"]`, o `BIS_fnc_addScriptedEventHandler`).
    - PROHIBICIÓN ABSOLUTA: Jamás introducir dependencias de `CBA_fnc_*` o `ace_*` en silencio si el perfil declara `CBA: no` o `ACE3: no` (constituye defecto Bloqueante).
 
-### Triage de Modo: el modo lo fija la señal más alta
+### Triage de Modo: el script decide el modo determinísticamente
 
-| Modo | Se activa si… |
+El modo de revisión (`Micro`, `Estándar` o `Completo`) se determina obligatoriamente mediante la ejecución del script:
+```bat
+python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz del proyecto> --mode-query
+```
+*(Nota: `<raíz del proyecto>` es la carpeta del proyecto SQF bajo revisión, nunca la raíz del plugin. Códigos de salida del script: `0` = cálculo exitoso, `1` = error duro de ruta o argumentos, `10` = completado con `NO VERIFICADO`).*
+
+El script analiza el inventario de archivos `.sqf` del proyecto y emite el informe estructurado (`MODO: ...`, `MOTIVO: ...`, `RESUMEN: modo=...; escalado=...`).
+**Fallback obligatorio:** Si el script no está disponible o falla su invocación, el modo por defecto es `Estándar` y se declara `NO VERIFICADO` en el informe; **NUNCA se clasifica como Micro por criterio manual**.
+
+| Modo | Criterio determinista del script |
 |---|---|
-| Sin flujo | Typo, ajuste de un valor, pregunta conceptual |
-| **Micro** | Exactamente 1 archivo aislado, ≤50 líneas (función única autocontenida o corrección puntual), SIN dependencias externas, SIN archivos de ciclo de vida (`init*.sqf`, `description.ext`), SIN señales de red ni estado compartido ni persistencia |
-| **Estándar** | 2–3 archivos, o >50 líneas, o presencia de archivos de ciclo de vida de misión, o una señal de red puntual (un remoteExec/publicVariable), o modificación de código existente con red |
-| **Completo** | ≥4 archivos o ≥3 módulos, o JIP/estado persistente, o Headless Client, o remoteExec + estado compartido, o sistema nuevo con interfaz para el editor de misiones, o se pide "auditoría completa" |
+| Sin flujo | Typo, ajuste de un valor puntual, pregunta conceptual |
+| **Micro** | Exactamente 1 archivo `.sqf` aislado, ≤50 líneas, sin dependencias externas, sin archivos de ciclo de vida (`init*.sqf`, `description.ext`), sin señales de red ni scheduler |
+| **Estándar** | Proyecto multi-archivo (2–3 archivos), o >50 líneas, o ciclo de vida de misión, o señales de red (`remoteExec`, `publicVariable`), o modificación de código con red |
+| **Completo** | ≥4 archivos o ≥3 módulos, JIP, Headless Client, persistencia, o encargo explícito de auditoría completa |
 
-**Salvaguardas de Modo Micro y Criterios Estrictos de Exclusión**:
-Un proyecto grande o complejo no puede caer en modo Micro por error. Para clasificar en Micro, deben cumplirse TODAS las condiciones básicas simultáneamente (un único archivo autocontenido, ≤50 líneas, sin red ni dependencias).
-Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exclusión, **SE PROHÍBE EL MODO MICRO Y ESCALA OBLIGATORIAMENTE A ESTÁNDAR O COMPLETO**:
-1. **Volumen de código y archivos**: Más de 3 archivos (>3 archivos) o más de 150 líneas de código en total (>150 líneas total, en cualquier archivo individual o suma del proyecto).
-2. **Primitivas de red MP**: Uso o modificación de primitivas de red multijugador (`remoteExec`, `remoteExecCall`, `publicVariable`, variables de broadcast o sincronización remota).
-3. **Lógica JIP y sincronización de estado**: Manejo de Join In Progress (JIP), persistencia o sincronización de estado compartido entre clientes y servidor.
-4. **Configuración de misión**: Modificaciones, creación o dependencias en `description.ext` (incluyendo `CfgRemoteExec`, `CfgFunctions`) o scripts de ciclo de vida de misión (`init.sqf`, `initServer.sqf`, `initPlayerLocal.sqf`).
-5. **Infraestructura de servidor dedicado**: Lógica orientada a servidor dedicado (`isDedicated`, Headless Client, gestión de ownership y migración de localidad).
-6. **Carga y control del scheduler**: Bucles persistentes (`while`), esperas (`waitUntil`), handlers por frame (`onEachFrame`, `EachFrame`) o escaneos globales masivos (`allUnits`, `allMissionObjects`).
-→ **ESCALA INMEDIATAMENTE a Estándar (o Completo)**. Ante la duda o ambigüedad, NUNCA usar Micro. Un proyecto grande jamás puede caer en Micro.
-
-- **Señales de red** (grep) — **este patrón es el mismo que aplica `sqf_models.check_escalation_needed`, no pueden divergir**: `remoteExec|remoteExecCall|publicVariable|publicVariableServer|publicVariableClient|setVariable\s*\[.*true|isServer|isDedicated|hasInterface|BIS_fnc_MP|addPublicVariableEventHandler|remoteExecutedOwner|setOwner|HeadlessClient|initServer|initPlayer`.
-
-- **Señales de rendimiento** (grep) — **también debe cubrir `check_escalation_needed`**: `while|waitUntil|EachFrame|onEachFrame|Draw3D|allUnits|allGroups|allMissionObjects|nearestObjects|nearEntities|createVehicle|createUnit|createGroup|addEventHandler|addMissionEventHandler|spawn|execVM`. Un script Micro con bucle persistente, handler por frame o escaneo global sube a Estándar.
-
-- **Escalada**: si durante el trabajo se cruza un umbral, sube de modo y avisa en una línea. Nunca bajes.
-- **Override**: si el usuario pide un modo, se respeta (salvo Micro con señales de red: avisa del riesgo y escala).
+**Prelectura informativa (orientativa, no decisoria):**
+Las expresiones regulares de señales de red y rendimiento se usan únicamente como prelectura informativa previa; la decisión formal reside exclusivamente en `sqf_orchestrator.py` (mediante `sqf_models.py`):
+- **Señales de red (prelectura informativa)**: `remoteExec|remoteExecCall|publicVariable|publicVariableServer|publicVariableClient|setVariable\s*\[.*true|isServer|isDedicated|hasInterface|BIS_fnc_MP|addPublicVariableEventHandler|remoteExecutedOwner|setOwner|HeadlessClient|initServer|initPlayer`.
+- **Señales de rendimiento (prelectura informativa)**: `while|waitUntil|EachFrame|onEachFrame|Draw3D|allUnits|allGroups|allMissionObjects|nearestObjects|nearEntities|createVehicle|createUnit|createGroup|addEventHandler|addMissionEventHandler|spawn|execVM`.
+- **Override**: si el usuario pide explícitamente un modo, se le pasa `--mode <modo>` al orquestador para no re-escalar (salvo Micro con señales de red: avisar del riesgo técnico y escalar).
 
 ## Participación por modo
 
@@ -94,7 +91,9 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 
 **Micro** = 1–2 agentes, cero ceremonia, pero con el **checklist de autoverificación de dedicado** de `sqf-standards.md` aplicado estrictamente por el orquestador antes de entregar.
 - **Invariantes de Servidor Dedicado en Micro**: En Micro se mantienen rigurosamente todas las invariantes de dedicado: `player` jamás se utiliza sin verificar `hasInterface`, los comandos de interfaz UI (`hint`, `cutText`) se consideran inútiles o prohibidos en servidor, y jamás se permite `sleep` o `waitUntil` en contextos unscheduled.
-- **Análisis Estático Obligatorio**: Si hay archivo en disco, Micro ejecuta OBLIGATORIAMENTE `sqf-static-analyzer` (mediante `references/run_sqflint.py`, ruta relativa a la raíz de esta skill). No uses rutas absolutas: la ubicación del plugin varía por máquina y por ámbito (workspace o global). Si la ruta relativa no resuelve, se deriva desde la raíz de la skill, nunca desde un caminho fijo. Si `sqflint` no está disponible (`SQFLINT_NO_DISPONIBLE`), el análisis se reporta como `NO VERIFICADO` (NUNCA como PASA).
+- **Análisis Estático Obligatorio**: Si hay archivo en disco, Micro ejecuta OBLIGATORIAMENTE el análisis estático mediante:
+  `python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz> --lint`
+  (o pasando la ruta del archivo). Códigos de salida del script: `0` = reporte producido sin error fatal, `1` = error duro o ruta inválida, `10` = linter no disponible (`NO VERIFICADO`). Si `sqflint` no está disponible (`SQFLINT_NO_DISPONIBLE`), el análisis se reporta como `NO VERIFICADO` (NUNCA como PASA).
 
 ## Flujo Completo
 
@@ -102,11 +101,17 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 1b. **Innovación** (Estándar/Completo si se piden mecánicas nuevas o mejoras creativas): `sqf-innovator` propone mecánicas viables aplicando los 4 filtros de viabilidad (ancho de banda de red, presupuesto de scheduler/frame, persistencia JIP e invariantes de dedicado) y separando ideas de implementaciones verificadas antes de fijar la arquitectura.
 2. **Diseño**: `sqf-architect` → Plan de desarrollo. El orquestador lo valida (¿cubre el objetivo? ¿contratos completos, incluyendo definición explícita de `CfgRemoteExec` para funciones remotas? ¿módulos con archivos disjuntos?).
 3. **Verificación previa (paralelo)**: wiki sobre los comandos del plan + `sqf-mission-config-auditor` (hechos de configuración y comprobación cruzada obligatoria de funciones invocadas remotamente contra la whitelist de `CfgRemoteExec`).
-   **La caché NO es evidencia.** `references/wiki-cache.md` contiene entradas marcadas `NO VERIFICADO (memoria)`: son pistas, no hechos. Regla: todo comando no trivial se verifica contra la Biki (URL + fecha de consulta) ANTES de usarlo como hecho, y solo después se anota en la caché con su fecha. Si la herramienta de navegador no está disponible, el comando queda `NO VERIFICADO` — no se usa de memoria.
+   **La caché NO es evidencia.** `references/wiki-cache.md` contiene entradas marcadas `NO VERIFICADO (memoria)`: son pistas, no hechos. Regla: todo comando no trivial se verifica contra la Biki (URL + fecha de consulta) ANTES de usarlo como hecho (mediante búsqueda web si está disponible), y solo después se anota en la caché con su fecha. Si no hay herramienta de consulta web disponible, el comando queda `NO VERIFICADO` — no se usa de memoria.
 4. **Implementación**: un `sqf-developer` por módulo, en paralelo (máx. 3 simultáneos). Cada uno recibe: su módulo, el contrato **completo**, hechos de wiki, `sqf-standards.md`. El contrato es inmutable: si un developer lo necesita cambiar, devuelve una *solicitud de cambio de contrato* y el orquestador decide.
 5. **Integración** (orquestador): interfaces coinciden con el contrato, orden de init, nombres de variables compartidas sin colisión.
-6. **Oleada de revisión (paralelo)**: static-analyzer, best-practices, locality y performance-auditor, con paquete de contexto.
-7. **Corrección** (máx. **3 iteraciones**): orden locality → performance → best-practices. Los arreglos de un archivo los hace su developer (o el orquestador si es trivial). Re-invoca al agente que señaló + static-analyzer siempre (`references/run_sqflint.py`) + best-practices si cambió estructura.
+6. **Oleada de revisión (paralelo)**:
+   - **Análisis estático (`sqf-static-analyzer`)**: se ejecuta mediante el script orquestador:
+     ```bat
+     python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz> --lint
+     ```
+     (Códigos de salida del script: `0` = reporte producido sin error fatal, `1` = error duro o ruta inválida, `10` = linter no disponible / `NO VERIFICADO`). El subagente `sqf-static-analyzer` lee directamente el informe estructurado generado por el script (`[BLOQUEANTE|SUGERENCIA|NO_VERIFICADO] archivo:línea (disciplina): descripción` y `RESUMEN: ...`) sin parsear stdout a mano ni aplicar mapeos divergentes de severidad.
+   - **Revisores semánticos**: best-practices, locality y performance-auditor, con paquete de contexto.
+7. **Corrección** (máx. **3 iteraciones**): orden locality → performance → best-practices. Los arreglos de un archivo los hace su developer (o el orquestador si es trivial). Re-invoca al agente que señaló + `python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz> --lint` siempre + best-practices si cambió estructura.
    - **Definición precisa de Bloqueante (P0)** — esta es la ÚNICA definición normativa; no la dupliques en otra sección, refiérela:
      1. **Errores de sintaxis SQF**: errores detectados determinísticamente por `references/run_sqflint.py` (exit code 1) **o variables locales fugadas al scope exterior sin `private`/`params`**. *(Nota: comandos no reconocidos por sqflint se tratan como Sugerencia/Pista a confirmar contra el Biki antes de tratarlos como error. Un warning de scope de sqflint cuenta como BLOQUEANTE, no como sugerencia.)*
      2. **Softlocks potenciales, bucles infinitos o bloqueos de init**: `waitUntil` sin condición alcanzable garantizada ni timeout de seguridad, bucles infinitos sin cadencia (`while {true}` sin suspensión o PFH), retrasos bloqueantes prolongados (`sleep`/`uiSleep`/`waitUntil`) en el hilo principal de scripts de inicialización (`init.sqf`, `initServer.sqf`, `postInit`) que congelan la carga de la misión (deben delegarse a `spawn` desacoplado o PFH), o esperas cruzadas cliente-servidor donde un nodo espera indefinidamente una variable nunca emitida.
@@ -116,9 +121,10 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
      6. **Contratos de interfaz rotos o parámetros incompatibles**: discrepancias en cantidad, orden o tipos de datos requeridos en `params` entre módulos o llamadas de función.
      7. **Inyección no permitida de dependencias de framework**: uso de funciones o identificadores de CBA o ACE3 (`CBA_fnc_*`, `ace_*`) cuando el perfil del proyecto declara `CBA: no` o `ACE3: no`.
    - **PUERTA DE CALIDAD INFRANQUEABLE**:
+     - El conteo de bloqueantes y la lista de `archivo:línea` provienen directamente del informe estructurado emitido por `sqf_orchestrator.py --lint` (`RESUMEN: bloqueantes=N...`) y de los revisores semánticos.
      - Si tras **3 iteraciones** todavía queda **AL MENOS UN BLOQUEANTE** abierto:
        1. **DETENER** el proceso de forma inmediata.
-       2. **INFORMAR AL USUARIO** con el desglose exacto de cada bloqueante sin resolver (agente/disciplina detector, archivo, línea, causa raíz e intentos fallidos).
+       2. **INFORMAR AL USUARIO** con el desglose exacto de cada bloqueante sin resolver (agente/disciplina detector, archivo, línea, causa raíz e intentos fallidos extraídos del informe).
        3. **PROHIBIDO DECLARAR "TERMINADO" O ENTREGAR COMO FINAL**. El resultado se marca como `DETENIDO (NO PASA)` y se solicita intervención humana. Se elimina cualquier cláusula de entrega permisiva; código con bloqueantes jamás se entrega como terminado.
      - Solo se avanza a los pasos 8 (Plan de prueba), 9 (Doc writer) y 10 (Entrega) si el número de bloqueantes abiertos es **CERO**.
 8. **Plan de prueba**: `sqf-test-plan-generator` con riesgos, "no verificable" y el plan de medición del performance-auditor.
@@ -126,7 +132,7 @@ Si el encargo o código cumple **CUALQUIERA** de los siguientes criterios de exc
 10. **Entrega**: Aplicación del checklist de salida completo (`references/checklist-entrega.md`) y generación obligatoria del informe de estados por ítem.
 
 **Estándar** = pasos 1, 3 (sin config si no aplica), 4 (orquestador o developers opcionales), 6, 7, y 8–9 según la tabla, con validación de `references/checklist-entrega.md` en el paso 10.
-**Micro** = escribir → checklist de invariantes de dedicado (`sqf-standards.md` y `references/checklist-entrega.md`) → `sqf-static-analyzer` (obligatorio si hay archivo, mediante `references/run_sqflint.py`) → `sqf-best-practices-reviewer` → **ciclo de corrección (máx. 3 iteraciones, igual que el modo Estándar)**: si la pasada reporta un BLOQUEANTE, se corrige y se vuelve a pasar `sqf-best-practices-reviewer` + `sqf-static-analyzer`; al alcanzar 3 iteraciones con un BLOQUEANTE abierto se aplica la PUERTA DE CALIDAD INFRANQUEABLE (`DETENIDO (NO PASA)`, sin entrega) → generar informe obligatorio de estados por ítem (`PASA` / `NO PASA` / `NO VERIFICADO`) → entregar (únicamente si CERO bloqueantes).
+**Micro** = escribir → checklist de invariantes de dedicado (`sqf-standards.md` y `references/checklist-entrega.md`) → análisis estático obligatorio si hay archivo (`python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz> --lint`) → `sqf-best-practices-reviewer` → **ciclo de corrección (máx. 3 iteraciones, igual que el modo Estándar)**: si la pasada reporta un BLOQUEANTE en el informe del script o del revisor, se corrige y se vuelve a pasar `sqf-best-practices-reviewer` + `sqf_orchestrator.py --lint`; al alcanzar 3 iteraciones con un BLOQUEANTE abierto se aplica la PUERTA DE CALIDAD INFRANQUEABLE (`DETENIDO (NO PASA)`, sin entrega) → generar informe obligatorio de estados por ítem (`PASA` / `NO PASA` / `NO VERIFICADO`) → entregar (únicamente si CERO bloqueantes).
 
 ## Paquete de contexto (formato de traspaso a cualquier subagente)
 
