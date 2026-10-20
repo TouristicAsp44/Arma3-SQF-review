@@ -141,3 +141,59 @@ def check_escalation_needed_for_files(files: dict[str, str] | list[Any], current
             if check_escalation_needed(raw, current_mode) != "Micro":
                 return "Estándar"
     return current_mode
+
+
+def determine_escalation_reason(files: dict[str, str] | list[Any], mode: str) -> str:
+    """Determina la causa exacta del escalado o de la permanencia en Micro."""
+    if len(files) > 1:
+        return f"Proyecto multi-archivo ({len(files)} archivos .sqf)"
+    
+    code = ""
+    if isinstance(files, dict) and files:
+        code = next(iter(files.values()))
+    elif isinstance(files, list) and files:
+        from pathlib import Path
+        p = Path(files[0])
+        code = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else str(files[0])
+    
+    clean = strip_comments_and_strings(code)
+    if NETWORK_SIGNALS_RE.search(clean):
+        return "Señales de red / MP detectadas"
+    if PERFORMANCE_SIGNALS_RE.search(clean):
+        return "Señales de scheduler / rendimiento detectadas"
+    if LIFECYCLE_SIGNALS_RE.search(clean):
+        return "Scripts de ciclo de vida / configuración detectados"
+    
+    if mode == "Micro":
+        return "Archivo único autocontenido sin señales de red ni scheduler"
+    return "Configuración manual o modo previo preservado"
+
+
+def format_findings_report(findings: list[SQFFinding]) -> str:
+    """Produce el informe de hallazgos estructurado de una línea por hallazgo más RESUMEN."""
+    lines: list[str] = []
+    bloqueantes = 0
+    sugerencias = 0
+    no_verificado = 0
+
+    for f in findings:
+        lines.append(f"[{f.severity}] {f.file}:{f.line} ({f.discipline}): {f.description}")
+        if f.severity == "BLOQUEANTE":
+            bloqueantes += 1
+        elif f.severity == "SUGERENCIA":
+            sugerencias += 1
+        elif f.severity == "NO_VERIFICADO":
+            no_verificado += 1
+
+    lines.append(f"RESUMEN: bloqueantes={bloqueantes}; sugerencias={sugerencias}; no_verificado={no_verificado}")
+    return "\n".join(lines)
+
+
+def summarize_escalation(mode: str, reason: str = "") -> str:
+    """Produce el informe estructurado del resultado de triage / escalado de modo."""
+    lines: list[str] = [f"MODO: {mode}"]
+    if reason:
+        lines.append(f"MOTIVO: {reason}")
+    escalado = "si" if mode != "Micro" else "no"
+    lines.append(f"RESUMEN: modo={mode}; escalado={escalado}")
+    return "\n".join(lines)
