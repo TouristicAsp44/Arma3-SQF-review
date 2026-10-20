@@ -1,6 +1,11 @@
+---
+description: Reglas canónicas de escritura y diseño SQF de Arma 3 para desarrolladores y revisores del equipo.
+---
+
 # Estándar SQF del equipo (fuente única)
 
 Lo usan developer (para escribir), reviewers (para revisar) y orquestador (checklist Micro).
+Es la fuente canónica de las **reglas de escritura** del equipo.
 
 ## Reglas de código
 1. Toda variable local con `private _x = …;`. En funciones/EH, `params` tipado con defaults al inicio: `params [["_unit", objNull, [objNull]], ["_n", 0, [0]]];`
