@@ -17,7 +17,11 @@ from typing import Callable, Optional
 from sqf_models import (
     check_escalation_needed,
     check_escalation_needed_for_files,
+    determine_escalation_reason,
+    format_findings_report,
     parse_sqflint_output,
+    summarize_escalation,
+    SQFFinding,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +64,7 @@ def run_orchestrator(
     input_root: Optional[str] = None,
     dry_run: bool = False,
     input_file: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> int:
     if input_file and not input_code:
         input_code = read_input_code(input_file)
@@ -118,6 +123,9 @@ def run_orchestrator(
             )
             return 1
 
+    explicit_mode = (mode is not None)
+    initial_mode = mode if explicit_mode else "Micro"
+
     if state_exists:
         with open(resolved_state_file, "r", encoding="utf-8") as f:
             state = json.load(f)
@@ -130,13 +138,14 @@ def run_orchestrator(
             "code": initial_code,
             "findings": [],
             "context": f"ARCHIVOS ANALIZADOS: {input_root}" if input_root else "",
-            "mode": "Micro",
+            "mode": initial_mode,
+            "explicit_mode": explicit_mode,
             "input_root": input_root,
             "dry_run": dry_run,
         }
 
-        # Invocación real de escalado multi-archivo cuando se pasa input_root
-        if input_root and os.path.isdir(input_root):
+        # Invocación real de escalado multi-archivo cuando se pasa input_root y no es modo explícito
+        if not explicit_mode and input_root and os.path.isdir(input_root):
             sqf_files: dict[str, str] = {}
             for r_dir, _, f_names in os.walk(input_root):
                 for f_name in sorted(f_names):
@@ -185,12 +194,15 @@ def run_orchestrator(
     state["code"] = new_code
 
     current_mode = state.get("mode", "Micro")
-    new_mode = check_escalation_needed(new_code, current_mode)
-    escalated = (new_mode != current_mode)
-    if escalated:
-        print(f"Escalamiento detectado: Modo cambiado de {current_mode} a {new_mode}.")
-    state["mode"] = new_mode
-    state["escalated"] = escalated
+    if not state.get("explicit_mode", False):
+        new_mode = check_escalation_needed(new_code, current_mode)
+        escalated = (new_mode != current_mode)
+        if escalated:
+            print(f"Escalamiento detectado: Modo cambiado de {current_mode} a {new_mode}.")
+        state["mode"] = new_mode
+        state["escalated"] = escalated
+    else:
+        state["escalated"] = False
 
     temp_filename = f"_temp_orchestrator_{os.getpid()}_{iteration}.sqf"
     temp_sqf_path = os.path.abspath(os.path.join(resolved_work_dir, temp_filename))
@@ -288,6 +300,100 @@ def run_orchestrator(
         return 0
 
 
+def mode_query(root: Optional[str] = None) -> int:
+    resolved_root = os.path.abspath(root) if root else os.getcwd()
+    if not os.path.exists(resolved_root):
+        print(f"ERROR: La ruta '{resolved_root}' no existe.", file=sys.stderr)
+        return 1
+
+    sqf_files: dict[str, str] = {}
+    if os.path.isdir(resolved_root):
+        for r_dir, _, f_names in os.walk(resolved_root):
+            for f_name in sorted(f_names):
+                if f_name.lower().endswith(".sqf"):
+                    full_p = os.path.join(r_dir, f_name)
+                    try:
+                        with open(full_p, "r", encoding="utf-8", errors="replace") as sqf_f:
+                            sqf_files[full_p] = sqf_f.read()
+                    except Exception:
+                        pass
+    elif resolved_root.lower().endswith(".sqf"):
+        try:
+            with open(resolved_root, "r", encoding="utf-8", errors="replace") as sqf_f:
+                sqf_files[resolved_root] = sqf_f.read()
+        except Exception:
+            pass
+
+    mode = check_escalation_needed_for_files(sqf_files, "Micro")
+    reason = determine_escalation_reason(sqf_files, mode)
+    print(summarize_escalation(mode, reason))
+    return 0
+
+
+def run_lint(
+    target: Optional[str] = None,
+    linter_executable: Optional[str] = None,
+    mode: Optional[str] = None,
+    timeout: int = 30,
+) -> int:
+    resolved_target = os.path.abspath(target) if target else os.getcwd()
+    if not os.path.exists(resolved_target):
+        print(f"ERROR: La ruta '{resolved_target}' no existe.", file=sys.stderr)
+        return 1
+
+    resolved_linter = (
+        os.path.abspath(str(linter_executable))
+        if linter_executable
+        else DEFAULT_LINTER
+    )
+    if not os.path.exists(resolved_linter):
+        finding = SQFFinding(
+            severity="NO_VERIFICADO",
+            file=resolved_target,
+            line=0,
+            description="Linter no disponible (SQFLINT_NO_DISPONIBLE)",
+            evidence=f"No se encontró el ejecutable: {resolved_linter}",
+            discipline="Sintaxis",
+        )
+        report = format_findings_report([finding])
+        print(report)
+        print("Estado: NO VERIFICADO (el linter no está disponible)")
+        return 10
+
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    cmd = [sys.executable, "-B", resolved_linter, resolved_target]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=timeout,
+        )
+        rc = proc.returncode
+        stdout = proc.stdout
+    except subprocess.TimeoutExpired:
+        rc = 3
+        stdout = "TIMEOUT EXPIRED: El linter superó el tiempo límite."
+    except Exception as e:
+        rc = 3
+        stdout = f"SQFLINT_NO_DISPONIBLE: error al invocar linter ({e})"
+
+    findings = parse_sqflint_output(rc, stdout)
+    report = format_findings_report(findings)
+    print(report)
+
+    if any(f.severity == "NO_VERIFICADO" for f in findings) or rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout:
+        print("Estado: NO VERIFICADO (el linter no está disponible)")
+        return 10
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Orquestador SQF Antigravity")
     parser.add_argument("--continuar", action="store_true", help="Continuar sesión previa")
@@ -303,8 +409,28 @@ def main():
                         help="Carpeta del proyecto a auditar (inventario de archivos .sqf).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Simulacion con el agente mock. SIEMPRE termina en NO VERIFICADO (exit 10).")
+    parser.add_argument("--mode-query", action="store_true",
+                        help="Consulta el modo correspondiente al proyecto según el inventario de archivos.")
+    parser.add_argument("--lint", action="store_true",
+                        help="Ejecuta análisis estático y produce el informe estructurado de hallazgos.")
+    parser.add_argument("--mode", type=str, choices=["Micro", "Estándar", "Completo"], default=None,
+                        help="Modo explícito de ejecución (evita re-escalado automático).")
+    parser.add_argument("files", nargs="*", help="Archivos o rutas adicionales.")
 
     args = parser.parse_args()
+
+    if args.mode_query and args.lint:
+        print("ERROR: --mode-query y --lint son mutuamente excluyentes.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.mode_query:
+        target_root = args.input_root or (args.files[0] if args.files else ".")
+        sys.exit(mode_query(root=target_root))
+
+    if args.lint:
+        target = args.input_root or args.input_code or (args.files[0] if args.files else ".")
+        sys.exit(run_lint(target=target, linter_executable=args.linter, mode=args.mode))
+
     try:
         code = run_orchestrator(
             state_file=args.state_file,
@@ -317,6 +443,7 @@ def main():
             input_code=read_input_code(args.input_code),
             input_root=args.input_root,
             dry_run=args.dry_run,
+            mode=args.mode,
         )
         sys.exit(code)
     except (FileNotFoundError, ValueError) as e:
