@@ -15,21 +15,44 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from google.antigravity import LocalAgentConfig, types
+try:
+    from google.antigravity import LocalAgentConfig, types
+except ImportError:
+    LocalAgentConfig = None  # type: ignore
+    types = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-# Directorio por defecto de definiciones de agentes en el workspace
-DEFAULT_AGENTS_DIR = Path(r"C:\Users\Touri\.gemini\config\agents")
+# Los subagentes de este plugin viven en <plugin>/agents, no en el directorio global
+# de agentes de la maquina. La ruta se deriva del propio archivo.
+def _resolve_default_agents_dir() -> Path:
+    curr = Path(__file__).resolve().parent
+    for p in [curr] + list(curr.parents):
+        cand = p / "agents"
+        if cand.is_dir() and any(cand.glob("sqf-*.md")):
+            return cand
+    return Path(__file__).resolve().parent.parent.parent.parent / "agents"
+
+
+DEFAULT_AGENTS_DIR = _resolve_default_agents_dir()
 
 # Campos presentes en la especificación/frontmatter pero NO CONFIRMADOS en el SDK
+# Campos del frontmatter que el SDK no expone y que por tanto se descartan con aviso.
 NO_CONFIRMADO_FIELDS: list[str] = [
     "mode",
     "role",
     "instructions",
     "commandExecutionPolicy",
     "subagent",
-    "mainAgent"
+    "mainAgent",
+]
+
+# Campos que ademas se deben volcar a un log para que la diferencia entre lo que
+# declara el .md y lo que construye el SDK sea visible, no silenciosa.
+REPORTAR_EN_LOG: list[str] = [
+    "commandExecutionPolicy",
+    "subagent",
+    "mainAgent",
 ]
 PROJECT_MODES = ["Micro", "Estándar", "Completo"]
 
@@ -78,6 +101,10 @@ def load_sqf_subagents(
         else:
             logger.warning("Modo no estándar recibido ('%s') - NO CONFIRMADO en SDK", mode)
 
+    if types is None:
+        logger.warning("SDK google-antigravity no instalado en el entorno: NO VERIFICADO")
+        raise RuntimeError("google-antigravity no está instalado en este entorno (NO VERIFICADO)")
+
     # Filtrado estricto: únicamente archivos sqf-*.md, excluyendo py-*.md y otros
     sqf_files = sorted([
         f for f in target_dir.iterdir()
@@ -116,7 +143,17 @@ def load_sqf_subagents(
 
         for unconfirmed in NO_CONFIRMADO_FIELDS:
             if unconfirmed in fm:
-                logger.warning("Campo descartado '%s' = %s en '%s'. NO CONFIRMADO en SDK.", unconfirmed, fm[unconfirmed], file_path.name)
+                nivel = logging.WARNING if unconfirmed in REPORTAR_EN_LOG else logging.INFO
+                logger.log(
+                    nivel,
+                    "Campo '%s' = %s en '%s'. %s",
+                    unconfirmed,
+                    fm[unconfirmed],
+                    file_path.name,
+                    "El SDK no lo expone: la config construida puede no equivaler a la que "
+                    "Antigravity aplica." if unconfirmed in REPORTAR_EN_LOG
+                    else "NO CONFIRMADO en SDK.",
+                )
 
         description = str(fm.get("description", ""))
         raw_tools = fm.get("tools")
