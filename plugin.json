@@ -1,1 +1,8 @@
-{"name":"arma3-sqf-review","description":"Equipo de subagentes para desarrollo, revisión arquitectónica, localidad multijugador, mejores prácticas y auditoría de scripts SQF de Arma 3.","disabled":true}
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "arma3-sqf-review",
+  "displayName": "Arma 3 SQF Review",
+  "version": "1.0.0",
+  "description": "Equipo de subagentes para desarrollo, revisión arquitectónica, localidad multijugador, mejores prácticas y auditoría de scripts SQF de Arma 3.",
+  "disabled": false
+}
