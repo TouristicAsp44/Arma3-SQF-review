@@ -92,8 +92,8 @@ def locate_sqflint():
 
 def parse_error_line(file_path, line):
     """
-    Parsea una línea de salida de sqflint con formato [line,col]:error:msg
-    y la formatea como archivo:línea: error: mensaje.
+    Parsea una línea de salida de sqflint con formato [line,col]:error:msg o [line,col]:warning:msg
+    y la formatea como archivo:línea: nivel: mensaje.
     """
     m = re.match(r"^\[(\d+),\s*(\d+)\]:(?:(error|warning):)?(.*)$", line, re.IGNORECASE)
     if m:
@@ -102,10 +102,12 @@ def parse_error_line(file_path, line):
         level = (m.group(3) or "error").lower()
         msg = m.group(4).strip()
         return f"{file_path}:{line_num}: {level}: {msg}"
+    if re.match(r"^(.*?):(\d+):\s*(error|warning):\s*(.*)$", line, re.IGNORECASE):
+        return line
     return f"{file_path}:{line}"
 
 
-def main():
+def main(argv=None):
     # Asegurar codificación UTF-8 en salida estándar
     if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
         try:
@@ -113,11 +115,12 @@ def main():
         except Exception:
             pass
 
-    if len(sys.argv) < 2:
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) < 1:
         print("Uso: python run_sqflint.py <archivo.sqf | directorio>")
-        sys.exit(1)
+        return 1
 
-    target = sys.argv[1]
+    target = args[0]
     if not os.path.exists(target):
         print(f"ERROR: La ruta '{target}' no existe.")
         sys.exit(2)
@@ -138,8 +141,12 @@ def main():
         files.append(target)
 
     if not files:
-        print(f"ESTADO: SIN ERRORES (no se encontraron archivos .sqf en '{target}')")
-        sys.exit(0)
+        # exit 0 aqui se traduciria en "PASA" en el bloque A.1 del checklist de entrega,
+        # sin haber analizado una sola linea. Se usa el codigo 3 (NO DISPONIBLE) para
+        # que el consumidor lo reporte como NO VERIFICADO, nunca como PASA.
+        print(f"ESTADO: NO SE ENCONTRARON ARCHIVOS .sqf EN '{target}'")
+        print("El analisis no se ejecuto. Reportar como NO VERIFICADO, nunca como PASA.")
+        sys.exit(3)
 
     total_with_errors = 0
     total_files = len(files)
@@ -171,8 +178,10 @@ def main():
                 if not line:
                     continue
                 file_lines.append(line)
-                if ":error:" in line.lower() or (rc != 0 and ":warning:" not in line.lower()):
-                    error_lines.append(parse_error_line(f, line))
+                normalized = parse_error_line(f, line)
+                file_lines[-1] = normalized
+                if ":error:" in normalized.lower() or ":warning:" in normalized.lower():
+                    error_lines.append(normalized)
 
         has_error = (rc != 0) or any(":error:" in l.lower() for l in file_lines)
         if has_error:
@@ -192,7 +201,13 @@ def main():
             print(f"== {f} ({status_tag}) ==")
             for l in lines:
                 print(f"  {l}")
-        print(f"ARCHIVOS_CON_PROBLEMAS=0 DE {total_files}")
+        # Las advertencias se listan aparte para que el consumidor no las confunda con "sin problemas".
+        warnings_only = [e for e in error_lines if ":warning:" in e.lower()]
+        if warnings_only:
+            print(f"\n--- ADVERTENCIAS (archivo:línea) ---")
+            for w in warnings_only:
+                print(f"  {w}")
+        print(f"ARCHIVOS_CON_PROBLEMAS=0 DE {total_files} (advertencias: {len(warnings_only)})")
         sys.exit(0)
     else:
         print("ESTADO: ERRORES")
