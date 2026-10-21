@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import pytest
 from sqf_models import check_escalation_needed, check_escalation_needed_for_files
 

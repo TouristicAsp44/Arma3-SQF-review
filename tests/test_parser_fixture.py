@@ -1,5 +1,4 @@
-import pytest
-from sqf_models import parse_sqflint_output, SQFFinding
+from sqf_models import parse_sqflint_output
 
 
 def test_scope_warning_is_bloqueante():

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+
 import pytest
 from sqf_orchestrator import run_orchestrator
 
@@ -41,6 +42,7 @@ def test_input_file_populates_state(tmp_path: Path):
         agent_func=capturing_agent,
         dry_run=False,
     )
+    assert rc in (0, 10)
     assert len(captured_prompts) == 1
     assert secret_code in captured_prompts[0]
 

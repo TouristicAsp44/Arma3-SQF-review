@@ -12,16 +12,16 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from sqf_models import (
+    SQFFinding,
     check_escalation_needed,
     check_escalation_needed_for_files,
     determine_escalation_reason,
     format_findings_report,
     parse_sqflint_output,
     summarize_escalation,
-    SQFFinding,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +42,7 @@ def default_mock_agent(prompt: str) -> str:
     return f"/* Código simulado en respuesta a: {prompt[:30]}... */\npublicVariableServer 'P_Var';"
 
 
-def read_input_code(path: Optional[str]) -> Optional[str]:
+def read_input_code(path: str | None) -> str | None:
     if not path:
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -50,12 +50,12 @@ def read_input_code(path: Optional[str]) -> Optional[str]:
 
 
 def _resolve_orchestrator_paths(
-    work_dir: Optional[str],
-    state_file: Optional[str],
-    failed_file: Optional[str],
-    notes_file: Optional[str],
-    archived_notes_dir: Optional[str],
-    linter_executable: Optional[str],
+    work_dir: str | None,
+    state_file: str | None,
+    failed_file: str | None,
+    notes_file: str | None,
+    archived_notes_dir: str | None,
+    linter_executable: str | None,
 ) -> tuple[str, str, str, str, str, str]:
     resolved_work_dir = os.path.abspath(str(work_dir)) if work_dir else SCRIPT_DIR
     resolved_state_file = (
@@ -98,11 +98,11 @@ def _resolve_orchestrator_paths(
 def _load_or_create_state(
     resolved_state_file: str,
     continuar: bool,
-    input_code: Optional[str],
-    input_root: Optional[str],
-    mode: Optional[str],
+    input_code: str | None,
+    input_root: str | None,
+    mode: str | None,
     dry_run: bool,
-) -> tuple[Optional[dict], Optional[int]]:
+) -> tuple[dict | None, int | None]:
     state_exists = os.path.exists(resolved_state_file)
     if continuar:
         if not state_exists:
@@ -143,7 +143,7 @@ def _load_or_create_state(
                         try:
                             with open(full_p, "r", encoding="utf-8", errors="replace") as sqf_f:
                                 sqf_files[full_p] = sqf_f.read()
-                        except Exception:
+                        except OSError:
                             pass
             if sqf_files:
                 escalated_mode = check_escalation_needed_for_files(sqf_files, state["mode"])
@@ -204,6 +204,7 @@ def _run_linter_on_code(
                 errors="replace",
                 env=env,
                 timeout=timeout,
+                check=False,
             )
             return proc.returncode, proc.stdout
         except subprocess.TimeoutExpired:
@@ -273,21 +274,21 @@ def _process_iteration_results(
 
 
 def run_orchestrator(
-    state_file: Optional[str] = None,
-    failed_file: Optional[str] = None,
-    notes_file: Optional[str] = None,
-    archived_notes_dir: Optional[str] = None,
-    linter_executable: Optional[str] = None,
-    agent_func: Optional[Callable[[str], str]] = None,
-    work_dir: Optional[str] = None,
+    state_file: str | None = None,
+    failed_file: str | None = None,
+    notes_file: str | None = None,
+    archived_notes_dir: str | None = None,
+    linter_executable: str | None = None,
+    agent_func: Callable[[str], str] | None = None,
+    work_dir: str | None = None,
     continuar: bool = False,
     max_iterations: int = 3,
     timeout: int = 30,
-    input_code: Optional[str] = None,
-    input_root: Optional[str] = None,
+    input_code: str | None = None,
+    input_root: str | None = None,
     dry_run: bool = False,
-    input_file: Optional[str] = None,
-    mode: Optional[str] = None,
+    input_file: str | None = None,
+    mode: str | None = None,
 ) -> int:
     if input_file and not input_code:
         input_code = read_input_code(input_file)
@@ -386,7 +387,7 @@ def run_orchestrator(
     )
 
 
-def mode_query(root: Optional[str] = None) -> int:
+def mode_query(root: str | None = None) -> int:
     resolved_root = os.path.abspath(root) if root else os.getcwd()
     if not os.path.exists(resolved_root):
         print(f"ERROR: La ruta '{resolved_root}' no existe.", file=sys.stderr)
@@ -401,13 +402,13 @@ def mode_query(root: Optional[str] = None) -> int:
                     try:
                         with open(full_p, "r", encoding="utf-8", errors="replace") as sqf_f:
                             sqf_files[full_p] = sqf_f.read()
-                    except Exception:
+                    except OSError:
                         pass
     elif resolved_root.lower().endswith(".sqf"):
         try:
             with open(resolved_root, "r", encoding="utf-8", errors="replace") as sqf_f:
                 sqf_files[resolved_root] = sqf_f.read()
-        except Exception:
+        except OSError:
             pass
 
     try:
@@ -425,9 +426,9 @@ def mode_query(root: Optional[str] = None) -> int:
 
 
 def run_lint(
-    target: Optional[str] = None,
-    linter_executable: Optional[str] = None,
-    mode: Optional[str] = None,
+    target: str | None = None,
+    linter_executable: str | None = None,
+    mode: str | None = None,
     timeout: int = 30,
 ) -> int:
     resolved_target = os.path.abspath(target) if target else os.getcwd()
@@ -479,13 +480,14 @@ def run_lint(
             errors="replace",
             env=env,
             timeout=timeout,
+            check=False,
         )
         rc = proc.returncode
         stdout = proc.stdout
     except subprocess.TimeoutExpired:
         rc = 3
         stdout = "TIMEOUT EXPIRED: El linter superó el tiempo límite."
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         rc = 3
         stdout = f"SQFLINT_NO_DISPONIBLE: error al invocar linter ({e})"
 

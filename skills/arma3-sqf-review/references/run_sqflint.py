@@ -9,13 +9,13 @@ Códigos de salida:
   2: Error de argumentos o ruta no encontrada
   3: SQFLINT_NO_DISPONIBLE (el linter no está instalado ni accesible)
 """
-import sys
-import os
 import glob
+import os
 import re
 import shutil
-import subprocess
 import site
+import subprocess
+import sys
 
 
 def locate_sqflint():
@@ -51,7 +51,7 @@ def locate_sqflint():
             if user_base:
                 candidates.append(os.path.join(user_base, "Scripts", "sqflint.exe"))
                 candidates.append(os.path.join(user_base, "Scripts", "sqflint.EXE"))
-        except Exception:
+        except (AttributeError, OSError):
             pass
         candidates.append(os.path.join(sys.prefix, "Scripts", "sqflint.exe"))
         candidates.append(os.path.join(sys.prefix, "Scripts", "sqflint.EXE"))
@@ -60,7 +60,7 @@ def locate_sqflint():
             user_base = site.getuserbase()
             if user_base:
                 candidates.append(os.path.join(user_base, "bin", "sqflint"))
-        except Exception:
+        except (AttributeError, OSError):
             pass
         candidates.append(os.path.expanduser("~/.local/bin/sqflint"))
         candidates.append(os.path.join(sys.prefix, "bin", "sqflint"))
@@ -77,14 +77,14 @@ def locate_sqflint():
     try:
         res = subprocess.run(
             [sys.executable, "-m", "sqflint", "--help"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            check=False,
         )
         if res.returncode == 0:
             return [sys.executable, "-m", "sqflint"]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
 
     return None
@@ -107,12 +107,100 @@ def parse_error_line(file_path, line):
     return f"{file_path}:{line}"
 
 
+def _collect_target_files(target: str) -> list[str]:
+    files = []
+    if os.path.isdir(target):
+        for root, _, filenames in os.walk(target):
+            for f in sorted(filenames):
+                if f.lower().endswith(".sqf"):
+                    files.append(os.path.join(root, f))
+        files.sort()
+    else:
+        files.append(target)
+    return files
+
+
+def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], list[str], bool]:
+    cmd = sqflint_cmd + ["-e", "e", f]
+    try:
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=30,
+        )
+        output = res.stdout.strip()
+        rc = res.returncode
+    except (subprocess.SubprocessError, OSError) as ex:
+        output = f"Excepción al ejecutar sqflint: {ex}"
+        rc = 1
+
+    file_lines = []
+    file_errors = []
+    if output:
+        for line in output.splitlines():
+            s_line = line.strip()
+            if not s_line:
+                continue
+            normalized = parse_error_line(f, s_line)
+            file_lines.append(normalized)
+            if re.search(r":\s*error:", normalized, re.IGNORECASE) or re.search(r":\s*warning:", normalized, re.IGNORECASE):
+                file_errors.append(normalized)
+
+    has_error = (rc != 0) or any(re.search(r":\s*error:", l, re.IGNORECASE) for l in file_lines)
+    if has_error:
+        status_tag = f"ERRORES (exit {rc})"
+        if not file_lines and rc != 0:
+            file_errors.append(f"{f}: Error de sintaxis desconocido (exit {rc})")
+    else:
+        status_tag = "OK"
+
+    return status_tag, file_lines, file_errors, has_error
+
+
+def _emit_linter_results(
+    detailed_results: list[tuple[str, str, list[str]]],
+    error_lines: list[str],
+    total_files: int,
+    total_with_errors: int,
+) -> None:
+    if total_with_errors == 0:
+        print("ESTADO: SIN ERRORES")
+        print(f"Total archivos analizados: {total_files}")
+        for f, status_tag, lines in detailed_results:
+            print(f"== {f} ({status_tag}) ==")
+            for l in lines:
+                print(f"  {l}")
+        warnings_only = [e for e in error_lines if re.search(r":\s*warning:", e, re.IGNORECASE)]
+        if warnings_only:
+            print("\n--- ADVERTENCIAS (archivo:línea) ---")
+            for w in warnings_only:
+                print(f"  {w}")
+        print(f"ARCHIVOS_CON_PROBLEMAS=0 DE {total_files} (advertencias: {len(warnings_only)})")
+        sys.exit(0)
+    else:
+        print("ESTADO: ERRORES")
+        print(f"ARCHIVOS_CON_PROBLEMAS={total_with_errors} DE {total_files}")
+        print("\n--- DETALLE DE ERRORES (archivo:línea) ---")
+        for err in error_lines:
+            print(f"  {err}")
+        print("\n--- DESGLOSE POR ARCHIVO ---")
+        for f, status_tag, lines in detailed_results:
+            print(f"== {f} ({status_tag}) ==")
+            for l in lines:
+                print(f"  {l}")
+        sys.exit(1)
+
+
 def main(argv=None):
-    # Asegurar codificación UTF-8 en salida estándar
     if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
         try:
             sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
+        except (AttributeError, OSError):
             pass
 
     args = sys.argv[1:] if argv is None else argv
@@ -130,97 +218,24 @@ def main(argv=None):
         print("SQFLINT_NO_DISPONIBLE (instala con: pip install sqflint, o preinstálalo fuera del sandbox)")
         sys.exit(3)
 
-    files = []
-    if os.path.isdir(target):
-        for root, _, filenames in os.walk(target):
-            for f in sorted(filenames):
-                if f.lower().endswith(".sqf"):
-                    files.append(os.path.join(root, f))
-        files.sort()
-    else:
-        files.append(target)
-
+    files = _collect_target_files(target)
     if not files:
-        # exit 0 aqui se traduciria en "PASA" en el bloque A.1 del checklist de entrega,
-        # sin haber analizado una sola linea. Se usa el codigo 3 (NO DISPONIBLE) para
-        # que el consumidor lo reporte como NO VERIFICADO, nunca como PASA.
         print(f"ESTADO: NO SE ENCONTRARON ARCHIVOS .sqf EN '{target}'")
         print("El analisis no se ejecuto. Reportar como NO VERIFICADO, nunca como PASA.")
         sys.exit(3)
 
     total_with_errors = 0
-    total_files = len(files)
     detailed_results = []
     error_lines = []
 
     for f in files:
-        # La bandera '-e e' fuerza código de salida 1 cuando sqflint encuentra errores sintácticos
-        cmd = sqflint_cmd + ["-e", "e", f]
-        try:
-            res = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace"
-            )
-            output = res.stdout.strip()
-            rc = res.returncode
-        except Exception as ex:
-            output = f"Excepción al ejecutar sqflint: {ex}"
-            rc = 1
-
-        file_lines = []
-        if output:
-            for line in output.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                file_lines.append(line)
-                normalized = parse_error_line(f, line)
-                file_lines[-1] = normalized
-                if re.search(r":\s*error:", normalized, re.IGNORECASE) or re.search(r":\s*warning:", normalized, re.IGNORECASE):
-                    error_lines.append(normalized)
-
-        has_error = (rc != 0) or any(re.search(r":\s*error:", l, re.IGNORECASE) for l in file_lines)
+        status_tag, file_lines, file_errors, has_error = _lint_single_file(f, sqflint_cmd)
         if has_error:
             total_with_errors += 1
-            status_tag = f"ERRORES (exit {rc})"
-            if not file_lines and rc != 0:
-                error_lines.append(f"{f}: Error de sintaxis desconocido (exit {rc})")
-        else:
-            status_tag = "OK"
-
+        error_lines.extend(file_errors)
         detailed_results.append((f, status_tag, file_lines))
 
-    if total_with_errors == 0:
-        print("ESTADO: SIN ERRORES")
-        print(f"Total archivos analizados: {total_files}")
-        for f, status_tag, lines in detailed_results:
-            print(f"== {f} ({status_tag}) ==")
-            for l in lines:
-                print(f"  {l}")
-        # Las advertencias se listan aparte para que el consumidor no las confunda con "sin problemas".
-        warnings_only = [e for e in error_lines if re.search(r":\s*warning:", e, re.IGNORECASE)]
-        if warnings_only:
-            print(f"\n--- ADVERTENCIAS (archivo:línea) ---")
-            for w in warnings_only:
-                print(f"  {w}")
-        print(f"ARCHIVOS_CON_PROBLEMAS=0 DE {total_files} (advertencias: {len(warnings_only)})")
-        sys.exit(0)
-    else:
-        print("ESTADO: ERRORES")
-        print(f"ARCHIVOS_CON_PROBLEMAS={total_with_errors} DE {total_files}")
-        print("\n--- DETALLE DE ERRORES (archivo:línea) ---")
-        for err in error_lines:
-            print(f"  {err}")
-        print("\n--- DESGLOSE POR ARCHIVO ---")
-        for f, status_tag, lines in detailed_results:
-            print(f"== {f} ({status_tag}) ==")
-            for l in lines:
-                print(f"  {l}")
-        sys.exit(1)
+    _emit_linter_results(detailed_results, error_lines, len(files), total_with_errors)
 
 
 if __name__ == "__main__":

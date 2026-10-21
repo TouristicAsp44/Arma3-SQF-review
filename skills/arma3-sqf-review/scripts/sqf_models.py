@@ -1,6 +1,8 @@
 import re
 from typing import Any, Literal
+
 from pydantic import BaseModel
+
 
 class SQFFinding(BaseModel):
     severity: Literal["BLOQUEANTE", "SUGERENCIA", "NO_VERIFICADO"]

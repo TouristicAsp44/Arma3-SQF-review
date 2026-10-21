@@ -1,9 +1,7 @@
-import json
-import os
 from pathlib import Path
 from unittest.mock import patch
-import pytest
 
+import pytest
 from sqf_models import SQFFinding, format_findings_report
 from sqf_orchestrator import mode_query, run_lint, run_orchestrator
 
@@ -60,8 +58,8 @@ def test_mode_query_is_called_with_the_file_inventory(tmp_path: Path):
         inv = mock_escalate.call_args[0][0]
         assert isinstance(inv, dict)
         assert len(inv) == 2
-        assert str(file_a.resolve()) in [str(Path(p).resolve()) for p in inv.keys()]
-        assert str(file_b.resolve()) in [str(Path(p).resolve()) for p in inv.keys()]
+        assert str(file_a.resolve()) in [str(Path(p).resolve()) for p in inv]
+        assert str(file_b.resolve()) in [str(Path(p).resolve()) for p in inv]
 
 
 def test_explicit_mode_is_not_re_escalated(tmp_path: Path):

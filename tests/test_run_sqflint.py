@@ -1,8 +1,10 @@
 import subprocess
 import sys
 from pathlib import Path
+
 import pytest
-from run_sqflint import parse_error_line, main as run_sqflint_main
+from run_sqflint import main as run_sqflint_main
+from run_sqflint import parse_error_line
 
 
 def test_empty_dir_exits_3(tmp_path: Path):
@@ -21,6 +23,7 @@ def test_empty_dir_exits_3(tmp_path: Path):
         [sys.executable, str(run_sqflint_script), str(empty_dir)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 3
     assert "NO SE ENCONTRARON ARCHIVOS" in proc.stdout or "Directorio vacío" in proc.stdout
