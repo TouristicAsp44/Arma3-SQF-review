@@ -49,32 +49,20 @@ def read_input_code(path: Optional[str]) -> Optional[str]:
         return f.read()
 
 
-def run_orchestrator(
-    state_file: Optional[str] = None,
-    failed_file: Optional[str] = None,
-    notes_file: Optional[str] = None,
-    archived_notes_dir: Optional[str] = None,
-    linter_executable: Optional[str] = None,
-    agent_func: Optional[Callable[[str], str]] = None,
-    work_dir: Optional[str] = None,
-    continuar: bool = False,
-    max_iterations: int = 3,
-    timeout: int = 30,
-    input_code: Optional[str] = None,
-    input_root: Optional[str] = None,
-    dry_run: bool = False,
-    input_file: Optional[str] = None,
-    mode: Optional[str] = None,
-) -> int:
-    if input_file and not input_code:
-        input_code = read_input_code(input_file)
+def _resolve_orchestrator_paths(
+    work_dir: Optional[str],
+    state_file: Optional[str],
+    failed_file: Optional[str],
+    notes_file: Optional[str],
+    archived_notes_dir: Optional[str],
+    linter_executable: Optional[str],
+) -> tuple[str, str, str, str, str, str]:
     resolved_work_dir = os.path.abspath(str(work_dir)) if work_dir else SCRIPT_DIR
     resolved_state_file = (
         os.path.abspath(str(state_file))
         if state_file
         else os.path.join(resolved_work_dir, "orchestrator_state.json")
     )
-
     if failed_file is None:
         s_dir, s_base = os.path.split(resolved_state_file)
         s_name, s_ext = os.path.splitext(s_base)
@@ -97,21 +85,25 @@ def run_orchestrator(
         if linter_executable
         else DEFAULT_LINTER
     )
+    return (
+        resolved_work_dir,
+        resolved_state_file,
+        resolved_failed_file,
+        resolved_notes_file,
+        resolved_archived_notes_dir,
+        resolved_linter,
+    )
 
-    if agent_func is None:
-        if not dry_run:
-            raise ValueError(
-                "Falta el agente real. run_orchestrator exige agent_func: sin el, el "
-                "orquestador auditaria su propio mock y declararia 'Auditoria limpia' "
-                "sin haber mirado codigo. Para una simulacion usa dry_run=True, cuyo "
-                "resultado es siempre NO VERIFICADO."
-            )
-        resolved_agent_func = default_mock_agent
-    else:
-        resolved_agent_func = agent_func
 
+def _load_or_create_state(
+    resolved_state_file: str,
+    continuar: bool,
+    input_code: Optional[str],
+    input_root: Optional[str],
+    mode: Optional[str],
+    dry_run: bool,
+) -> tuple[Optional[dict], Optional[int]]:
     state_exists = os.path.exists(resolved_state_file)
-
     if continuar:
         if not state_exists:
             raise FileNotFoundError(f"Estado no encontrado para --continuar: {resolved_state_file}")
@@ -121,7 +113,7 @@ def run_orchestrator(
                 f"ERROR: Estado previo existe en {resolved_state_file}. Usa --continuar para retomar o borra el archivo.",
                 file=sys.stderr,
             )
-            return 1
+            return None, 1
 
     explicit_mode = (mode is not None)
     initial_mode = mode if explicit_mode else "Micro"
@@ -130,8 +122,6 @@ def run_orchestrator(
         with open(resolved_state_file, "r", encoding="utf-8") as f:
             state = json.load(f)
     else:
-        # El codigo de partida sale del input real, no de un placeholder. Sin esto el
-        # orquestador no puede auditar codigo existente, que es el caso de uso principal.
         initial_code = input_code if input_code is not None else "/* sqf code initial */"
         state = {
             "iteration": 1,
@@ -144,7 +134,6 @@ def run_orchestrator(
             "dry_run": dry_run,
         }
 
-        # Invocación real de escalado multi-archivo cuando se pasa input_root y no es modo explícito
         if not explicit_mode and input_root and os.path.isdir(input_root):
             sqf_files: dict[str, str] = {}
             for r_dir, _, f_names in os.walk(input_root):
@@ -162,23 +151,191 @@ def run_orchestrator(
                     print(f"Escalamiento multi-archivo detectado: Modo cambiado de {state['mode']} a {escalated_mode}.")
                     state["mode"] = escalated_mode
 
+    return state, None
+
+
+def _archive_revision_notes(
+    resolved_notes_file: str,
+    resolved_archived_notes_dir: str,
+    state: dict,
+) -> None:
+    if not os.path.exists(resolved_notes_file):
+        return
+    with open(resolved_notes_file, "r", encoding="utf-8") as nf:
+        notes_content = nf.read()
+    current_context = state.get("context", "")
+    if current_context:
+        state["context"] = f"{current_context}\nNotas de revisión:\n{notes_content}".strip()
+    else:
+        state["context"] = f"Notas de revisión:\n{notes_content}".strip()
+    print(f"--- LEYENDO NOTAS ---\n{notes_content}\n---------------------")
+
+    os.makedirs(resolved_archived_notes_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    archived_path = os.path.join(resolved_archived_notes_dir, f"notas_revision_{timestamp}.txt")
+    shutil.move(resolved_notes_file, archived_path)
+    print(f"Notas archivadas en {archived_path}.")
+
+
+def _run_linter_on_code(
+    code: str,
+    resolved_linter: str,
+    resolved_work_dir: str,
+    iteration: int,
+    timeout: int,
+) -> tuple[int, str]:
+    temp_filename = f"_temp_orchestrator_{os.getpid()}_{iteration}.sqf"
+    temp_sqf_path = os.path.abspath(os.path.join(resolved_work_dir, temp_filename))
+
+    try:
+        with open(temp_sqf_path, "w", encoding="utf-8") as tf:
+            tf.write(code)
+
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        cmd = [sys.executable, "-B", resolved_linter, temp_sqf_path]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                timeout=timeout,
+            )
+            return proc.returncode, proc.stdout
+        except subprocess.TimeoutExpired:
+            return 3, "TIMEOUT EXPIRED: El linter superó el tiempo límite."
+    finally:
+        if os.path.exists(temp_sqf_path):
+            try:
+                os.remove(temp_sqf_path)
+            except OSError:
+                pass
+
+
+def _process_iteration_results(
+    findings_objs: list,
+    state: dict,
+    iteration: int,
+    max_iterations: int,
+    resolved_state_file: str,
+    resolved_failed_file: str,
+    dry_run: bool,
+) -> int:
+    state["findings"] = [f.model_dump() for f in findings_objs]
+    blockers = [f for f in findings_objs if f.severity == "BLOQUEANTE"]
+    unverified = [f for f in findings_objs if f.severity == "NO_VERIFICADO"]
+
+    def _cleanup_state():
+        if os.path.exists(resolved_state_file):
+            try:
+                os.remove(resolved_state_file)
+            except OSError:
+                pass
+
+    if blockers:
+        if iteration >= max_iterations:
+            print(f"ERROR T09: Se alcanzó el límite de {max_iterations} iteraciones con hallazgos bloqueantes.")
+            state["status"] = "FALLIDO"
+            with open(resolved_failed_file, "w", encoding="utf-8") as ff:
+                json.dump(state, ff, indent=2)
+            _cleanup_state()
+            return 1
+
+        state["iteration"] = iteration + 1
+        with open(resolved_state_file, "w", encoding="utf-8") as sf:
+            json.dump(state, sf, indent=2)
+        print(
+            f"Hallazgos BLOQUEANTES encontrados ({len(blockers)}). "
+            f"Estado guardado para iteración {state['iteration']}/{max_iterations}."
+        )
+        print(
+            f"Para el intento {state['iteration']}/{max_iterations}, puedes escribir notas y ejecutar con --continuar."
+        )
+        return 0
+
+    if unverified:
+        print("completado con NO VERIFICADO")
+        _cleanup_state()
+        return 10
+
+    if dry_run:
+        print("Dry-run completado. NO VERIFICADO: no se ejecuto ningun agente real.")
+        _cleanup_state()
+        return 10
+
+    print("Auditoría limpia. Éxito.")
+    _cleanup_state()
+    return 0
+
+
+def run_orchestrator(
+    state_file: Optional[str] = None,
+    failed_file: Optional[str] = None,
+    notes_file: Optional[str] = None,
+    archived_notes_dir: Optional[str] = None,
+    linter_executable: Optional[str] = None,
+    agent_func: Optional[Callable[[str], str]] = None,
+    work_dir: Optional[str] = None,
+    continuar: bool = False,
+    max_iterations: int = 3,
+    timeout: int = 30,
+    input_code: Optional[str] = None,
+    input_root: Optional[str] = None,
+    dry_run: bool = False,
+    input_file: Optional[str] = None,
+    mode: Optional[str] = None,
+) -> int:
+    if input_file and not input_code:
+        input_code = read_input_code(input_file)
+
+    (
+        resolved_work_dir,
+        resolved_state_file,
+        resolved_failed_file,
+        resolved_notes_file,
+        resolved_archived_notes_dir,
+        resolved_linter,
+    ) = _resolve_orchestrator_paths(
+        work_dir,
+        state_file,
+        failed_file,
+        notes_file,
+        archived_notes_dir,
+        linter_executable,
+    )
+
+    resolved_agent_func: Callable[[str], str]
+    if agent_func is None:
+        if not dry_run:
+            raise ValueError(
+                "Falta el agente real. run_orchestrator exige agent_func: sin el, el "
+                "orquestador auditaria su propio mock y declararia 'Auditoria limpia' "
+                "sin haber mirado codigo. Para una simulacion usa dry_run=True, cuyo "
+                "resultado es siempre NO VERIFICADO."
+            )
+        resolved_agent_func = default_mock_agent
+    else:
+        resolved_agent_func = agent_func
+
+    state, error_code = _load_or_create_state(
+        resolved_state_file,
+        continuar,
+        input_code,
+        input_root,
+        mode,
+        dry_run,
+    )
+    if error_code is not None or state is None:
+        return error_code if error_code is not None else 1
+
     iteration = state.get("iteration", 1)
 
-    if continuar and os.path.exists(resolved_notes_file):
-        with open(resolved_notes_file, "r", encoding="utf-8") as nf:
-            notes_content = nf.read()
-        current_context = state.get("context", "")
-        if current_context:
-            state["context"] = f"{current_context}\nNotas de revisión:\n{notes_content}".strip()
-        else:
-            state["context"] = f"Notas de revisión:\n{notes_content}".strip()
-        print(f"--- LEYENDO NOTAS ---\n{notes_content}\n---------------------")
-
-        os.makedirs(resolved_archived_notes_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        archived_path = os.path.join(resolved_archived_notes_dir, f"notas_revision_{timestamp}.txt")
-        shutil.move(resolved_notes_file, archived_path)
-        print(f"Notas archivadas en {archived_path}.")
+    if continuar:
+        _archive_revision_notes(resolved_notes_file, resolved_archived_notes_dir, state)
 
     print(f"--- Iniciando Iteración {iteration} (Modo: {state.get('mode', 'Micro')}) ---")
 
@@ -204,38 +361,13 @@ def run_orchestrator(
     else:
         state["escalated"] = False
 
-    temp_filename = f"_temp_orchestrator_{os.getpid()}_{iteration}.sqf"
-    temp_sqf_path = os.path.abspath(os.path.join(resolved_work_dir, temp_filename))
-
-    try:
-        with open(temp_sqf_path, "w", encoding="utf-8") as tf:
-            tf.write(new_code)
-
-        env = os.environ.copy()
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        cmd = [sys.executable, "-B", resolved_linter, temp_sqf_path]
-        try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                timeout=timeout,
-            )
-            rc = proc.returncode
-            stdout = proc.stdout
-        except subprocess.TimeoutExpired:
-            rc = 3
-            stdout = "TIMEOUT EXPIRED: El linter superó el tiempo límite."
-    finally:
-        if os.path.exists(temp_sqf_path):
-            try:
-                os.remove(temp_sqf_path)
-            except OSError:
-                pass
+    rc, stdout = _run_linter_on_code(
+        new_code,
+        resolved_linter,
+        resolved_work_dir,
+        iteration,
+        timeout,
+    )
 
     try:
         findings_objs = parse_sqflint_output(rc, stdout)
@@ -243,61 +375,15 @@ def run_orchestrator(
         print(f"ERROR FATAL DEL LINTER: {e}", file=sys.stderr)
         return 2
 
-    state["findings"] = [f.model_dump() for f in findings_objs]
-
-    blockers = [f for f in findings_objs if f.severity == "BLOQUEANTE"]
-    unverified = [f for f in findings_objs if f.severity == "NO_VERIFICADO"]
-
-    if blockers:
-        if iteration >= max_iterations:
-            print(f"ERROR T09: Se alcanzó el límite de {max_iterations} iteraciones con hallazgos bloqueantes.")
-            state["status"] = "FALLIDO"
-            with open(resolved_failed_file, "w", encoding="utf-8") as ff:
-                json.dump(state, ff, indent=2)
-            if os.path.exists(resolved_state_file):
-                try:
-                    os.remove(resolved_state_file)
-                except OSError:
-                    pass
-            return 1
-        else:
-            state["iteration"] = iteration + 1
-            with open(resolved_state_file, "w", encoding="utf-8") as sf:
-                json.dump(state, sf, indent=2)
-            print(
-                f"Hallazgos BLOQUEANTES encontrados ({len(blockers)}). "
-                f"Estado guardado para iteración {state['iteration']}/{max_iterations}."
-            )
-            print(
-                f"Para el intento {state['iteration']}/{max_iterations}, puedes escribir notas y ejecutar con --continuar."
-            )
-            return 0
-    elif unverified:
-        print("completado con NO VERIFICADO")
-        if os.path.exists(resolved_state_file):
-            try:
-                os.remove(resolved_state_file)
-            except OSError:
-                pass
-        return 10
-    else:
-        if dry_run:
-            # Un dry-run no ha auditado nada real: su unico resultado honesto es
-            # NO VERIFICADO. Devolver 0 aqui seria un PASA falso.
-            print("Dry-run completado. NO VERIFICADO: no se ejecuto ningun agente real.")
-            if os.path.exists(resolved_state_file):
-                try:
-                    os.remove(resolved_state_file)
-                except OSError:
-                    pass
-            return 10
-        print("Auditoría limpia. Éxito.")
-        if os.path.exists(resolved_state_file):
-            try:
-                os.remove(resolved_state_file)
-            except OSError:
-                pass
-        return 0
+    return _process_iteration_results(
+        findings_objs,
+        state,
+        iteration,
+        max_iterations,
+        resolved_state_file,
+        resolved_failed_file,
+        dry_run,
+    )
 
 
 def mode_query(root: Optional[str] = None) -> int:

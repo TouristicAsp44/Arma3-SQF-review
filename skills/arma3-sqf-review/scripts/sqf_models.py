@@ -1,5 +1,5 @@
 import re
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel
 
 class SQFFinding(BaseModel):
@@ -48,10 +48,9 @@ def parse_sqflint_output(rc: int, stdout: str) -> list[SQFFinding]:
                 continue
             seen.add(key)
             is_scope = bool(SCOPE_WARNING_RE.search(msg))
-            if level.lower() == "error" or is_scope:
-                severity = "BLOQUEANTE"
-            else:
-                severity = "SUGERENCIA"
+            severity: Literal["BLOQUEANTE", "SUGERENCIA", "NO_VERIFICADO"] = (
+                "BLOQUEANTE" if (level.lower() == "error" or is_scope) else "SUGERENCIA"
+            )
             findings.append(SQFFinding(
                 severity=severity,
                 file=file_path,

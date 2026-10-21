@@ -98,7 +98,7 @@ def parse_error_line(file_path, line):
     m = re.match(r"^\[(\d+),\s*(\d+)\]:(?:(error|warning):)?(.*)$", line, re.IGNORECASE)
     if m:
         line_num = m.group(1)
-        col_num = m.group(2)
+        # col_num ignorado en formato canónico archivo:línea: nivel: mensaje
         level = (m.group(3) or "error").lower()
         msg = m.group(4).strip()
         return f"{file_path}:{line_num}: {level}: {msg}"
