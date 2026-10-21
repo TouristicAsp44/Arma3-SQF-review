@@ -160,3 +160,22 @@ def test_skill_md_invokes_the_orchestrator():
     assert "sqf_orchestrator.py --root <raíz del proyecto> --mode-query" in content or "sqf_orchestrator.py" in content
     assert "--mode-query" in content
     assert "--lint" in content
+
+
+def test_all_agents_registered_in_skill_md():
+    """Todos los subagentes sqf-*.md de agents/ están registrados en SKILL.md, incluido sqf-claim-verifier."""
+    plugin_root = Path(__file__).resolve().parent.parent
+    agents_dir = plugin_root / "agents"
+    skill_file = plugin_root / "skills" / "arma3-sqf-review" / "SKILL.md"
+
+    skill_content = skill_file.read_text(encoding="utf-8")
+    agent_files = list(agents_dir.glob("sqf-*.md"))
+
+    assert len(agent_files) == 11, f"Se esperaban 11 agentes en {agents_dir}, pero se encontraron {len(agent_files)}"
+
+    for af in agent_files:
+        agent_name = af.stem  # e.g. "sqf-claim-verifier"
+        assert f"`{agent_name}`" in skill_content or agent_name in skill_content, (
+            f"El subagente {agent_name} no está registrado en {skill_file}"
+        )
+

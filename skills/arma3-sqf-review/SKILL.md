@@ -23,6 +23,7 @@ El agente principal es el **orquestador**: único que decide, integra y entrega.
 | Rendimiento | `sqf-performance-auditor` | Carga del scheduler, escaneos, fugas, plan de medición |
 | Prueba | `sqf-test-plan-generator` | Plan manual dedicado + JIP |
 | Documentación | `sqf-doc-writer` | Guía de uso del script/sistema |
+| Verificación Declarativa | `sqf-claim-verifier` | Audita afirmaciones técnicas contra BIKI y fuentes primarias oficiales (URLs + fechas) |
 
 **Estándar único:** `references/sqf-standards.md`. Lo leen developer, reviewers y el orquestador; así se escribe y se revisa con la misma vara y hay menos iteraciones.
 
