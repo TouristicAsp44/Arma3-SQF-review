@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arma3-sqf-review"
+version = "0.1.0"
+description = "Plugin y suite de análisis y revisión SQF para Arma 3"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "skills/arma3-sqf-review/scripts",
+    "skills/arma3-sqf-review/references",
+    "."
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "skills/arma3-sqf-review/scripts"
+
+[tool.pyright]
+extraPaths = [
+    "skills/arma3-sqf-review/scripts",
+    "skills/arma3-sqf-review/references",
+    "."
+]
+
+[tool.setuptools]
+py-modules = ["sqf_models", "sqf_orchestrator"]
+
+[tool.setuptools.package-dir]
+"" = "skills/arma3-sqf-review/scripts"

@@ -122,6 +122,8 @@ def _collect_target_files(target: str) -> list[str]:
 
 def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], list[str], bool]:
     cmd = sqflint_cmd + ["-e", "e", f]
+    sub_env = os.environ.copy()
+    sub_env["PYTHONUTF8"] = "1"
     try:
         res = subprocess.run(
             cmd,
@@ -130,6 +132,7 @@ def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], l
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=sub_env,
             check=False,
             timeout=30,
         )

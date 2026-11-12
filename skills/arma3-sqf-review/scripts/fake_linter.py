@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""
-fake_linter.py - Simulador determinista de run_sqflint.py para el arnés de pruebas.
+"""fake_linter.py - Simulador determinista de run_sqflint.py para el arnés de pruebas (D8).
 
-Reproduce los códigos de retorno y el formato normalizado:
-  archivo:línea: nivel: mensaje
-- rc = 0: SIN ERRORES (o advertencias normalizadas)
-- rc = 1: Errores sintácticos o de comando
-- rc = 2: Error de uso / argumentos inválidos
-- rc = 3: Directorio vacío o sin archivos .sqf
+Reproduce con fidelidad los formatos reales de sqflint:
+1. Error de sentencia no interpretable con marca de variable y argumento:
+   archivo:línea: error: can't interpret statement (missing ;?): <Variable(cmd)> <String("...")>
+2. Aviso de ámbito con literal de variable:
+   archivo:línea: warning: Local variable "_x" is not from this scope (not private)
+3. Caso combinado (para pruebas de precedencia):
+   archivo:línea: warning: Local variable "_x" is not from this scope (not private): <Variable(cmd)>
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
+import re
+import sys
 
 
 def simulate_linter(target: Path, forced_rc: int | None = None) -> tuple[int, str]:
@@ -22,7 +23,7 @@ def simulate_linter(target: Path, forced_rc: int | None = None) -> tuple[int, st
         if forced_rc == 0:
             return 0, f"{target}:1: info: SIN ERRORES"
         if forced_rc == 1:
-            return 1, f"{target}:1: error: Error sintáctico simulado"
+            return 1, f'{target}:1: error: can\'t interpret statement (missing ;?): <Variable(testErr)> <String("arg")>'
         if forced_rc == 2:
             return 2, "Error de uso: argumentos inválidos"
         if forced_rc == 3:
@@ -30,7 +31,8 @@ def simulate_linter(target: Path, forced_rc: int | None = None) -> tuple[int, st
         return forced_rc, f"{target}:1: error: rc {forced_rc}"
 
     if not target.exists():
-        return 2, f"Error: ruta no encontrada '{target}'"
+        # Para pruebas CLI con targets simulados no existentes en disco
+        return 1, f'{target}:1: error: can\'t interpret statement (missing ;?): <Variable(playSoundUI)> <String("test")>'
 
     if target.is_dir():
         sqf_files = list(target.rglob("*.sqf"))
@@ -44,14 +46,25 @@ def simulate_linter(target: Path, forced_rc: int | None = None) -> tuple[int, st
     has_error = False
 
     if "SYNTAX_ERROR" in content:
-        lines.append(f"{target}:10: error: Error de sintaxis en expresión SQF")
+        lines.append(f'{target}:10: error: can\'t interpret statement (missing ;?): <Variable(syntaxErrCmd)> <String("arg")>')
         has_error = True
 
-    if "SCOPE_WARNING" in content:
-        lines.append(f'{target}:5: warning: Local variable "_x" is not from this scope (not private)')
+    if "SIMULTANEOUS_SCOPE" in content:
+        lines.append(f'{target}:5: warning: Local variable "_z" is not from this scope (not private): <Variable(setPos)>')
+
+    elif "SCOPE_WARNING" in content or "_z" in content:
+        lines.append(f'{target}:5: warning: Local variable "_z" is not from this scope (not private)')
 
     if "GENERIC_WARNING" in content:
         lines.append(f"{target}:15: warning: Advertencia general de linter")
+
+    # Detectar tokens de variables o comandos en el contenido para emitir marcas <Variable(...)> con formato real
+    tokens = re.findall(r"\b([a-zA-Z_]\w*)\b", content)
+    for tok in tokens:
+        if tok in ("playSoundUI", "comandoInventado123", "setpos", "setPos", "testVar"):
+            lines.append(f'{target}:1: error: can\'t interpret statement (missing ;?): <Variable({tok})> <String("param")>')
+            has_error = True
+            break
 
     if has_error:
         return 1, "\n".join(lines)

@@ -1,18 +1,19 @@
-"""
-Orquestador de ejecución SQF para Arma 3.
+"""Orquestador de ejecución SQF para Arma 3.
 
 Etapa 3 (R2): Bucle de validación interactiva, linter como subprocess, y
 archivo de notas. Todo anclado al directorio de trabajo experimental.
 """
 
 import argparse
+from collections.abc import Callable
 import datetime
 import json
 import os
+from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
 
 from sqf_models import (
     SQFFinding,
@@ -22,6 +23,14 @@ from sqf_models import (
     format_findings_report,
     parse_sqflint_output,
     summarize_escalation,
+)
+from sqf_wiki_reader import (
+    get_command,
+    get_data_git_sha,
+    get_function,
+    lookup_syntax_symbol,
+    resolve_wiki_root,
+    update_wiki,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,139 +48,105 @@ def default_mock_agent(prompt: str) -> str:
     Devuelve codigo deliberadamente trivial para que el dry-run ejercite el linter
     y la maquina de estados. El dry-run SIEMPRE termina en NO VERIFICADO.
     """
-    return f"/* Código simulado en respuesta a: {prompt[:30]}... */\npublicVariableServer 'P_Var';"
+    return "private _resultado = 42;\n"
 
 
-def read_input_code(path: str | None) -> str | None:
-    if not path:
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+def compute_item_9_report(
+    findings: list[SQFFinding],
+    rc: int,
+    stdout: str,
+    source_code: str,
+    wiki_path: str | None = None,
+) -> str:
+    """Calcula y formatea la fila del Ítem 9 del Checklist con cobertura de tokens y procedencia dinámica (D1, D7)."""
+    wiki_root = resolve_wiki_root(wiki_path)
+    data_sha = get_data_git_sha(wiki_root)
+    if rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout or any(f.severity == "NO_VERIFICADO" and "SQFLINT" in f.description for f in findings):
+        return f"| 9. Verificación de Comandos en Wiki / Biki | NO VERIFICADO | sqflint no disponible en el host (SQFLINT_NO_DISPONIBLE); análisis estático omitido (commit: {data_sha}). |"
 
+    # Fuente 1 (Obligatoria): Identificadores que el analizador efectivamente reportó
+    linter_tokens = set(re.findall(r"<Variable\(([a-zA-Z0-9_]+)\)>", stdout))
+    candidates = set(linter_tokens)
 
-def _resolve_orchestrator_paths(
-    work_dir: str | None,
-    state_file: str | None,
-    failed_file: str | None,
-    notes_file: str | None,
-    archived_notes_dir: str | None,
-    linter_executable: str | None,
-) -> tuple[str, str, str, str, str, str]:
-    resolved_work_dir = os.path.abspath(str(work_dir)) if work_dir else SCRIPT_DIR
-    resolved_state_file = (
-        os.path.abspath(str(state_file))
-        if state_file
-        else os.path.join(resolved_work_dir, "orchestrator_state.json")
-    )
-    if failed_file is None:
-        s_dir, s_base = os.path.split(resolved_state_file)
-        s_name, s_ext = os.path.splitext(s_base)
-        resolved_failed_file = os.path.join(s_dir, f"{s_name}.fallido{s_ext or '.json'}")
+    # Fuente 2 (Opcional, D1): Identificadores que inician sentencia en el código fuente,
+    # PERO únicamente si existen en el catálogo con grafía canónica exacta.
+    # Esta segunda fuente NUNCA puede generar ausentes.
+    if source_code:
+        clean = re.sub(r'/\*[\s\S]*?\*/|//.*|"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'', ' ', source_code)
+        for tok in re.findall(r'(?:^|[;{}])\s*([a-zA-Z0-9_]+)\b(?!=)', clean, re.MULTILINE):
+            info = lookup_syntax_symbol(tok, wiki_root)
+            if info and tok == info.get("canonical_name"):
+                candidates.add(tok)
+
+    total = len(candidates)
+    contrastados = 0
+    ausentes = []
+
+    for token in sorted(candidates):
+        info = lookup_syntax_symbol(token, wiki_root)
+        if info and token == info.get("canonical_name"):
+            contrastados += 1
+        else:
+            ausentes.append(token)
+
+    # Regla de origen corregida con límites de palabra para evitar subcadenas (D7):
+    bloqueantes_asociados = []
+    for tok in ausentes:
+        pattern = re.compile(r"\b" + re.escape(tok) + r"\b|<Variable\(" + re.escape(tok) + r"\)>", re.IGNORECASE)
+        is_associated = any(
+            f.severity == "BLOQUEANTE"
+            and (pattern.search(f.description) is not None or pattern.search(f.evidence) is not None)
+            for f in findings
+        )
+        if is_associated:
+            bloqueantes_asociados.append(tok)
+
+    bloqueantes_count = len(bloqueantes_asociados)
+
+    if total > 0 and contrastados == total and bloqueantes_count == 0:
+        estado = "PASA"
+        desc = (
+            f"100% de tokens candidatos del código ({total}/{total}) contrastados contra "
+            f"réplica offline a3ref (commit: {data_sha}; 0 ausentes; 0 bloqueantes asociados)."
+        )
     else:
-        resolved_failed_file = os.path.abspath(str(failed_file))
+        estado = "NO VERIFICADO"
+        aus_str = f" ({', '.join(sorted(ausentes))})" if ausentes else ""
+        desc = (
+            f"{contrastados} de {total} tokens candidatos contrastados contra "
+            f"réplica offline a3ref (commit: {data_sha}; {len(ausentes)} ausentes{aus_str}; "
+            f"{bloqueantes_count} bloqueantes asociados)."
+        )
 
-    resolved_notes_file = (
-        os.path.abspath(str(notes_file))
-        if notes_file
-        else os.path.join(resolved_work_dir, "notas_revision.txt")
-    )
-    resolved_archived_notes_dir = (
-        os.path.abspath(str(archived_notes_dir))
-        if archived_notes_dir
-        else os.path.join(resolved_work_dir, "archived_notes")
-    )
-    resolved_linter = (
-        os.path.abspath(str(linter_executable))
-        if linter_executable
-        else DEFAULT_LINTER
-    )
-    return (
-        resolved_work_dir,
-        resolved_state_file,
-        resolved_failed_file,
-        resolved_notes_file,
-        resolved_archived_notes_dir,
-        resolved_linter,
-    )
+    return f"| 9. Verificación de Comandos en Wiki / Biki | {estado} | Regla de Cobertura Documental:\n- {desc} |"
 
 
-def _load_or_create_state(
-    resolved_state_file: str,
-    continuar: bool,
-    input_code: str | None,
-    input_root: str | None,
-    mode: str | None,
-    dry_run: bool,
-) -> tuple[dict | None, int | None]:
-    state_exists = os.path.exists(resolved_state_file)
-    if continuar:
-        if not state_exists:
-            raise FileNotFoundError(f"Estado no encontrado para --continuar: {resolved_state_file}")
-    else:
-        if state_exists:
-            print(
-                f"ERROR: Estado previo existe en {resolved_state_file}. Usa --continuar para retomar o borra el archivo.",
-                file=sys.stderr,
-            )
-            return None, 1
-
-    explicit_mode = (mode is not None)
-    initial_mode = mode if explicit_mode else "Micro"
-
-    if state_exists:
-        with open(resolved_state_file, "r", encoding="utf-8") as f:
-            state = json.load(f)
-    else:
-        initial_code = input_code if input_code is not None else "/* sqf code initial */"
-        state = {
-            "iteration": 1,
-            "code": initial_code,
-            "findings": [],
-            "context": f"ARCHIVOS ANALIZADOS: {input_root}" if input_root else "",
-            "mode": initial_mode,
-            "explicit_mode": explicit_mode,
-            "input_root": input_root,
-            "dry_run": dry_run,
-        }
-
-        if not explicit_mode and input_root and os.path.isdir(input_root):
-            sqf_files: dict[str, str] = {}
-            for r_dir, _, f_names in os.walk(input_root):
-                for f_name in sorted(f_names):
-                    if f_name.lower().endswith(".sqf"):
-                        full_p = os.path.join(r_dir, f_name)
-                        try:
-                            with open(full_p, "r", encoding="utf-8", errors="replace") as sqf_f:
-                                sqf_files[full_p] = sqf_f.read()
-                        except OSError:
-                            pass
-            if sqf_files:
-                escalated_mode = check_escalation_needed_for_files(sqf_files, state["mode"])
-                if escalated_mode != state["mode"]:
-                    print(f"Escalamiento multi-archivo detectado: Modo cambiado de {state['mode']} a {escalated_mode}.")
-                    state["mode"] = escalated_mode
-
-    return state, None
+def _build_notes_content(findings: list[SQFFinding], iteration: int) -> str:
+    timestamp = datetime.datetime.now().isoformat()
+    lines = [
+        f"=== NOTAS DE REVISIÓN SQF - Iteración {iteration} ===",
+        f"Generado: {timestamp}",
+        f"Total hallazgos: {len(findings)}",
+        "",
+        "Hallazgos detallados:",
+    ]
+    for idx, f in enumerate(findings, start=1):
+        lines.append(f"{idx}. [{f.severity}] {f.file}:{f.line} - {f.description}")
+        if f.evidence:
+            lines.append(f"   Evidencia: {f.evidence}")
+    lines.append("")
+    lines.append("Acciones requeridas:")
+    lines.append("- Corregir los errores de sintaxis indicados arriba.")
+    lines.append("- Re-ejecutar el orquestador con --continuar.")
+    lines.append("==========================================")
+    return "\n".join(lines)
 
 
-def _archive_revision_notes(
-    resolved_notes_file: str,
-    resolved_archived_notes_dir: str,
-    state: dict,
-) -> None:
+def _archive_previous_notes(resolved_notes_file: str, resolved_archived_notes_dir: str):
     if not os.path.exists(resolved_notes_file):
         return
-    with open(resolved_notes_file, "r", encoding="utf-8") as nf:
-        notes_content = nf.read()
-    current_context = state.get("context", "")
-    if current_context:
-        state["context"] = f"{current_context}\nNotas de revisión:\n{notes_content}".strip()
-    else:
-        state["context"] = f"Notas de revisión:\n{notes_content}".strip()
-    print(f"--- LEYENDO NOTAS ---\n{notes_content}\n---------------------")
-
     os.makedirs(resolved_archived_notes_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     archived_path = os.path.join(resolved_archived_notes_dir, f"notas_revision_{timestamp}.txt")
     shutil.move(resolved_notes_file, archived_path)
     print(f"Notas archivadas en {archived_path}.")
@@ -224,143 +199,174 @@ def _process_iteration_results(
     max_iterations: int,
     resolved_state_file: str,
     resolved_failed_file: str,
+    resolved_notes_file: str,
     dry_run: bool,
+    mode: str,
 ) -> int:
-    state["findings"] = [f.model_dump() for f in findings_objs]
-    blockers = [f for f in findings_objs if f.severity == "BLOQUEANTE"]
-    unverified = [f for f in findings_objs if f.severity == "NO_VERIFICADO"]
+    bloqueantes = [f for f in findings_objs if f.severity == "BLOQUEANTE"]
+    print(f"Iteración {iteration}: {len(findings_objs)} hallazgos ({len(bloqueantes)} bloqueantes).")
 
-    def _cleanup_state():
+    notes_content = _build_notes_content(findings_objs, iteration)
+    with open(resolved_notes_file, "w", encoding="utf-8") as nf:
+        nf.write(notes_content)
+    print(f"Notas de revisión actualizadas en {resolved_notes_file}.")
+
+    if not bloqueantes and not dry_run:
+        print("Iteración sin bloqueantes. Validación exitosa.")
+        state["status"] = "EXITOSO"
+        state["findings"] = [f.model_dump() for f in findings_objs]
+        with open(resolved_state_file, "w", encoding="utf-8") as sf:
+            json.dump(state, sf, indent=2)
+        return 0
+
+    if dry_run and not bloqueantes:
+        print("Dry-run sin bloqueantes: el mock agent no valida código real.")
+        print("Estado: NO VERIFICADO (simulacion con mock agent)")
+        state["status"] = "NO_VERIFICADO"
+        state["findings"] = [f.model_dump() for f in findings_objs]
+        with open(resolved_state_file, "w", encoding="utf-8") as sf:
+            json.dump(state, sf, indent=2)
+        return 10
+
+    if iteration >= max_iterations:
+        print(f"Se alcanzó el límite máximo de {max_iterations} iteraciones con bloqueantes abiertos.")
+        print("PUERTA DE CALIDAD INFRANQUEABLE (T09): DETENIDO (NO PASA).")
+        state["status"] = "FALLIDO"
+        state["iteration"] = iteration
+        state["findings"] = [f.model_dump() for f in findings_objs]
+        state["bloqueantes_abiertos"] = len(bloqueantes)
+
+        with open(resolved_failed_file, "w", encoding="utf-8") as ff:
+            json.dump(state, ff, indent=2)
+        print(f"Estado fallido guardado en {resolved_failed_file}.")
+
         if os.path.exists(resolved_state_file):
             try:
                 os.remove(resolved_state_file)
             except OSError:
                 pass
+        return 1
 
-    if blockers:
-        if iteration >= max_iterations:
-            print(f"ERROR T09: Se alcanzó el límite de {max_iterations} iteraciones con hallazgos bloqueantes.")
-            state["status"] = "FALLIDO"
-            with open(resolved_failed_file, "w", encoding="utf-8") as ff:
-                json.dump(state, ff, indent=2)
-            _cleanup_state()
-            return 1
-
-        state["iteration"] = iteration + 1
-        with open(resolved_state_file, "w", encoding="utf-8") as sf:
-            json.dump(state, sf, indent=2)
-        print(
-            f"Hallazgos BLOQUEANTES encontrados ({len(blockers)}). "
-            f"Estado guardado para iteración {state['iteration']}/{max_iterations}."
-        )
-        print(
-            f"Para el intento {state['iteration']}/{max_iterations}, puedes escribir notas y ejecutar con --continuar."
-        )
-        return 0
-
-    if unverified:
-        print("completado con NO VERIFICADO")
-        _cleanup_state()
-        return 10
-
-    if dry_run:
-        print("Dry-run completado. NO VERIFICADO: no se ejecuto ningun agente real.")
-        _cleanup_state()
-        return 10
-
-    print("Auditoría limpia. Éxito.")
-    _cleanup_state()
+    print(f"Bloqueantes pendientes. Guarda estado para iteración {iteration + 1}.")
+    state["iteration"] = iteration + 1
+    state["status"] = "EN_PROGRESO"
+    state["findings"] = [f.model_dump() for f in findings_objs]
+    with open(resolved_state_file, "w", encoding="utf-8") as sf:
+        json.dump(state, sf, indent=2)
     return 0
+
+
+def _build_agent_prompt(
+    iteration: int,
+    state: dict,
+    resolved_notes_file: str,
+    input_code: str | None,
+    mode: str,
+) -> str:
+    prompt_parts = [
+        f"Iteración {iteration} de desarrollo/revisión SQF (Modo: {mode}).",
+        f"Código previo:\n{state.get('last_code', '') or (input_code or '')}",
+    ]
+    if os.path.exists(resolved_notes_file):
+        try:
+            with open(resolved_notes_file, "r", encoding="utf-8") as nf:
+                prompt_parts.append(f"Notas de la iteración previa:\n{nf.read()}")
+        except OSError:
+            pass
+    prompt_parts.append("Genera el código SQF corregido resolviendo todos los bloqueantes.")
+    return "\n\n".join(prompt_parts)
 
 
 def run_orchestrator(
     state_file: str | None = None,
-    failed_file: str | None = None,
     notes_file: str | None = None,
     archived_notes_dir: str | None = None,
     linter_executable: str | None = None,
-    agent_func: Callable[[str], str] | None = None,
     work_dir: str | None = None,
     continuar: bool = False,
     max_iterations: int = 3,
-    timeout: int = 30,
+    agent_func: Callable[[str], str] | None = None,
     input_code: str | None = None,
+    input_file: str | None = None,
     input_root: str | None = None,
     dry_run: bool = False,
-    input_file: str | None = None,
     mode: str | None = None,
+    timeout: int = 30,
 ) -> int:
-    if input_file and not input_code:
-        input_code = read_input_code(input_file)
+    resolved_work_dir = os.path.abspath(work_dir) if work_dir else os.getcwd()
+    os.makedirs(resolved_work_dir, exist_ok=True)
 
-    (
-        resolved_work_dir,
-        resolved_state_file,
-        resolved_failed_file,
-        resolved_notes_file,
-        resolved_archived_notes_dir,
-        resolved_linter,
-    ) = _resolve_orchestrator_paths(
-        work_dir,
-        state_file,
-        failed_file,
-        notes_file,
-        archived_notes_dir,
-        linter_executable,
+    resolved_state_file = (
+        os.path.abspath(state_file)
+        if state_file
+        else os.path.join(resolved_work_dir, "orchestrator_state.json")
+    )
+    resolved_failed_file = os.path.join(
+        os.path.dirname(resolved_state_file),
+        "orchestrator_state.fallido.json",
+    )
+    resolved_notes_file = (
+        os.path.abspath(notes_file)
+        if notes_file
+        else os.path.join(resolved_work_dir, "notas_revision.txt")
+    )
+    resolved_archived_notes_dir = (
+        os.path.abspath(archived_notes_dir)
+        if archived_notes_dir
+        else os.path.join(resolved_work_dir, "archived_notes")
+    )
+    resolved_linter = (
+        os.path.abspath(linter_executable)
+        if linter_executable
+        else DEFAULT_LINTER
     )
 
-    resolved_agent_func: Callable[[str], str]
-    if agent_func is None:
-        if not dry_run:
-            raise ValueError(
-                "Falta el agente real. run_orchestrator exige agent_func: sin el, el "
-                "orquestador auditaria su propio mock y declararia 'Auditoria limpia' "
-                "sin haber mirado codigo. Para una simulacion usa dry_run=True, cuyo "
-                "resultado es siempre NO VERIFICADO."
-            )
-        resolved_agent_func = default_mock_agent
-    else:
-        resolved_agent_func = agent_func
+    if not dry_run and agent_func is None:
+        raise ValueError(
+            "run_orchestrator exige agent_func en modo real. Si deseas ejecutar una "
+            "simulación con el mock agent, pasa dry_run=True explícitamente."
+        )
 
-    state, error_code = _load_or_create_state(
-        resolved_state_file,
-        continuar,
-        input_code,
-        input_root,
-        mode,
-        dry_run,
-    )
-    if error_code is not None or state is None:
-        return error_code if error_code is not None else 1
+    effective_agent = agent_func if agent_func is not None else default_mock_agent
 
-    iteration = state.get("iteration", 1)
+    effective_input_code = input_code
+    if effective_input_code is None and input_file is not None:
+        input_file_path = os.path.abspath(input_file)
+        if not os.path.exists(input_file_path):
+            raise FileNotFoundError(f"No se encontró el archivo de entrada: {input_file_path}")
+        with open(input_file_path, "r", encoding="utf-8") as f:
+            effective_input_code = f.read()
+
+    resolved_mode = mode or "Micro"
 
     if continuar:
-        _archive_revision_notes(resolved_notes_file, resolved_archived_notes_dir, state)
-
-    print(f"--- Iniciando Iteración {iteration} (Modo: {state.get('mode', 'Micro')}) ---")
-
-    prompt = (
-        f"Iteración {iteration}.\n"
-        f"Contexto acumulado:\n{state.get('context', '')}\n"
-        f"Código previo:\n{state.get('code', '')}\n"
-        f"Hallazgos previos:\n{json.dumps(state.get('findings', []))}"
-    )
-    if dry_run:
-        print(f"[ORCHESTRATOR] Prompt de iteración {iteration}:\n{prompt}")
-    new_code = resolved_agent_func(prompt)
-    state["code"] = new_code
-
-    current_mode = state.get("mode", "Micro")
-    if not state.get("explicit_mode", False):
-        new_mode = check_escalation_needed(new_code, current_mode)
-        escalated = (new_mode != current_mode)
-        if escalated:
-            print(f"Escalamiento detectado: Modo cambiado de {current_mode} a {new_mode}.")
-        state["mode"] = new_mode
-        state["escalated"] = escalated
+        if not os.path.exists(resolved_state_file):
+            print(f"Error: no existe archivo de estado previo en {resolved_state_file}.", file=sys.stderr)
+            return 1
+        with open(resolved_state_file, "r", encoding="utf-8") as sf:
+            state = json.load(sf)
+        iteration = state.get("iteration", 1)
+        _archive_previous_notes(resolved_notes_file, resolved_archived_notes_dir)
     else:
-        state["escalated"] = False
+        iteration = 1
+        state = {
+            "iteration": 1,
+            "status": "INICIADO",
+            "findings": [],
+            "last_code": effective_input_code or "",
+            "mode": resolved_mode,
+        }
+
+    agent_prompt = _build_agent_prompt(
+        iteration,
+        state,
+        resolved_notes_file,
+        effective_input_code,
+        resolved_mode,
+    )
+
+    new_code = effective_agent(agent_prompt)
+    state["last_code"] = new_code
 
     rc, stdout = _run_linter_on_code(
         new_code,
@@ -371,7 +377,7 @@ def run_orchestrator(
     )
 
     try:
-        findings_objs = parse_sqflint_output(rc, stdout)
+        findings_objs = parse_sqflint_output(rc, stdout, source_code=new_code)
     except ValueError as e:
         print(f"ERROR FATAL DEL LINTER: {e}", file=sys.stderr)
         return 2
@@ -383,8 +389,20 @@ def run_orchestrator(
         max_iterations,
         resolved_state_file,
         resolved_failed_file,
+        resolved_notes_file,
         dry_run,
+        resolved_mode,
     )
+
+
+def read_input_code(input_path: str | None) -> str | None:
+    if not input_path:
+        return None
+    resolved = os.path.abspath(input_path)
+    if not os.path.exists(resolved):
+        raise FileNotFoundError(f"No se encontró el archivo de entrada: {resolved}")
+    with open(resolved, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 def mode_query(root: str | None = None) -> int:
@@ -430,11 +448,19 @@ def run_lint(
     linter_executable: str | None = None,
     mode: str | None = None,
     timeout: int = 30,
+    wiki_path: str | None = None,
 ) -> int:
     resolved_target = os.path.abspath(target) if target else os.getcwd()
     if not os.path.exists(resolved_target):
         print(f"ERROR: La ruta '{resolved_target}' no existe.", file=sys.stderr)
         return 1
+
+    source_code = ""
+    if os.path.isfile(resolved_target):
+        try:
+            source_code = Path(resolved_target).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
 
     if os.path.isdir(resolved_target):
         has_sqf = False
@@ -464,6 +490,8 @@ def run_lint(
         )
         report = format_findings_report([finding])
         print(report)
+        item_9 = compute_item_9_report([finding], 3, "SQFLINT_NO_DISPONIBLE", source_code, wiki_path)
+        print(f"\n{item_9}")
         print("Estado: NO VERIFICADO (el linter no está disponible)")
         return 10
 
@@ -491,9 +519,12 @@ def run_lint(
         rc = 3
         stdout = f"SQFLINT_NO_DISPONIBLE: error al invocar linter ({e})"
 
-    findings = parse_sqflint_output(rc, stdout)
+    findings = parse_sqflint_output(rc, stdout, source_code=source_code)
     report = format_findings_report(findings)
     print(report)
+
+    item_9 = compute_item_9_report(findings, rc, stdout, source_code, wiki_path)
+    print(f"\n{item_9}")
 
     if any(f.severity == "NO_VERIFICADO" for f in findings) or rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout:
         print("Estado: NO VERIFICADO (el linter no está disponible)")
@@ -523,9 +554,46 @@ def main():
                         help="Ejecuta análisis estático y produce el informe estructurado de hallazgos.")
     parser.add_argument("--mode", type=str, choices=["Micro", "Estándar", "Completo"], default=None,
                         help="Modo explícito de ejecución (evita re-escalado automático).")
+    parser.add_argument("--file", dest="file_path", default=None,
+                        help="Ruta a un archivo .sqf a auditar")
+    parser.add_argument("--wiki", type=str, default=None,
+                        help="Consultar información técnica de un comando en la wiki a3ref")
+    parser.add_argument("--wiki-path", type=str, default=None,
+                        help="Ruta personalizada a la base de datos de la wiki")
+    parser.add_argument("--update-wiki", "--update", action="store_true",
+                        help="Actualizar repositorios de la wiki")
     parser.add_argument("files", nargs="*", help="Archivos o rutas adicionales.")
 
     args = parser.parse_args()
+
+    if args.wiki:
+        wiki_root = resolve_wiki_root(args.wiki_path)
+        info = get_command(args.wiki, wiki_root) or get_function(args.wiki, wiki_root)
+        sha = get_data_git_sha(wiki_root)
+        if info:
+            print(f"=== FICHA TÉCNICA BIKI: {info.get('canonical_name')} ===")
+            print(f"Commit Git SHA: {sha}")
+            print(f"Status: {info.get('status')}")
+            print(f"Versión: {info.get('version')}")
+            print(f"URL: {info.get('url')}")
+            if "locality" in info:
+                loc = info["locality"]
+                print(f"Locality: Argumento={loc.get('argument')}, Efecto={loc.get('effect')}")
+            print(json.dumps(info, indent=2, ensure_ascii=False))
+            sys.exit(0)
+        else:
+            print(f"Símbolo no encontrado en a3ref: {args.wiki}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.update_wiki:
+        wiki_root = resolve_wiki_root(args.wiki_path)
+        ok, msg = update_wiki(wiki_root)
+        if ok:
+            print(f"Actualización de Wiki: {msg}")
+            sys.exit(0)
+        else:
+            print(f"Error al sincronizar wiki: {msg}", file=sys.stderr)
+            sys.exit(1)
 
     if args.mode_query and args.lint:
         print("ERROR: --mode-query y --lint son mutuamente excluyentes.", file=sys.stderr)
@@ -535,9 +603,12 @@ def main():
         target_root = args.input_root or (args.files[0] if args.files else ".")
         sys.exit(mode_query(root=target_root))
 
+    if args.file_path:
+        sys.exit(run_lint(target=args.file_path, linter_executable=args.linter, mode=args.mode, wiki_path=args.wiki_path))
+
     if args.lint:
         target = args.input_root or args.input_code or (args.files[0] if args.files else ".")
-        sys.exit(run_lint(target=target, linter_executable=args.linter, mode=args.mode))
+        sys.exit(run_lint(target=target, linter_executable=args.linter, mode=args.mode, wiki_path=args.wiki_path))
 
     try:
         code = run_orchestrator(
