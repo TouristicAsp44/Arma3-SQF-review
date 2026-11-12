@@ -2,7 +2,7 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "arma3-sqf-review",
   "displayName": "Arma 3 SQF Review",
-  "version": "1.0.0",
-  "description": "Equipo de subagentes para desarrollo, revisión arquitectónica, localidad multijugador, mejores prácticas y auditoría de scripts SQF de Arma 3.",
+  "version": "1.1.0",
+  "description": "Equipo de subagentes para desarrollo, revisión arquitectónica, localidad multijugador, mejores prácticas y auditoría de scripts SQF de Arma 3. Verifica comandos contra el espejo local de la referencia oficial (a3ref/BIKI), con su URL, su identificador de revisión y su huella de snapshot obtenidas en tiempo de ejecución, manteniendo la búsqueda web como alternativa secundaria.",
   "disabled": false
 }
