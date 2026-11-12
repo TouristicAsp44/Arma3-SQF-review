@@ -1,7 +1,7 @@
-# INFORME DE PRUEBA DE HUMO SOBRE CÓDIGO SQF REAL (VERSIÓN 2.1)
+# INFORME DE PRUEBA DE HUMO SOBRE CÓDIGO SQF REAL (VERSIÓN 2.2)
 
 **Documento:** `INFORME-PRUEBA-REAL.md`  
-**Versión:** 2.1 (Revelación de Denominadores Reales, Desglose Estructural de Candidatos y Cierre Técnico)  
+**Versión:** 2.2 (Corrección de Sobrestatement Documental, Salvedad de Primitivas y Cierre Técnico)  
 **Versión:** 2.0 (Re-ejecución tras Corrección de Cobertura en Modo Carpeta - Defecto 11)  
 **Fecha:** 12 de Noviembre de 2026  
 **Entorno de Ejecución:** Windows / Python 3.14.4 / `sqflint 0.3.2`  
@@ -290,10 +290,11 @@ Los 24 comandos canónicos que componen el universo de candidatos contrastados s
    * *Recuento:* **9 comandos.**
    * *Valor Documental:* Este primer grupo corresponde a construcciones gramaticales, palabras clave y primitivas sintácticas fundamentales del lenguaje SQF. No aporta valor documental sustancial sobre la API del motor de juego, pero su presencia en el catálogo certifica la corrección léxica de las sentencias del script.
 
-2. **Grupo 2: Comandos de API del motor propiamente dichos (15 comandos):**
+2. **Grupo 2: Comandos de API propiamente dichos (15 comandos)** *(con la salvedad de que 3 corresponden a primitivas del lenguaje o del motor, siendo 12 los comandos de API en sentido estricto)*:
    * `addCamShake`, `call`, `deleteVehicle`, `drop`, `enableCamShake`, `playSound`, `playSound3D`, `playableUnits`, `player`, `ppEffectCommitted`, `ppEffectDestroy`, `publicVariable`, `setWind`, `sleep`, `switchableUnits`.
-   * *Recuento:* **15 comandos.**
-   * *Valor Documental:* Este segundo grupo representa la **verificación efectiva y sustantiva contra la réplica offline `a3ref`**. Cada uno de estos 15 comandos fue validado en tiempo de ejecución respecto a su disponibilidad, su signatura canónica, su compatibilidad con servidor dedicado y su estado documental oficial (todos verificados en estado `ok`).
+   * *Recuento:* **15 comandos.** *(Salvedad técnica: dentro de este grupo de 15, tres símbolos no constituyen comandos de API en sentido estricto sino primitivas del lenguaje o del motor —específicamente `call`, `sleep` y `player`—, por lo que el subconjunto de comandos de API propiamente dichos es de 12. Se conservan los recuentos de 15 y 9 para mantener la coherencia aritmética con el total de 24 candidatos contrastados).*
+   * *Valor Documental:* Este segundo grupo representa la **verificación efectiva contra la réplica offline `a3ref`**. La ruta de verificación del Ítem 9 comprueba en tiempo de ejecución: que el símbolo existe en el catálogo oficial de la réplica, que su grafía coincide de forma exacta con la grafía canónica, cuál es su estado documental oficial (todos verificados en estado `ok`), desde qué versión del motor está disponible y cuál es su URL oficial tomada del registro.
+   * *Aclaración sobre Servidor Dedicado:* La compatibilidad con servidor dedicado no forma parte de esta verificación y se consulta en la matriz certificada de localidad por la ruta de auditoría de localidad, de modo que ninguna afirmación de compatibilidad con servidor dedicado puede atribuirse a la fila del Ítem 9.
 
 Con este desglose, el lector y el equipo auditor pueden calibrar con exactitud matemática lo que la cifra de 24 candidatos contrastados representa en el contexto de la misión.
 

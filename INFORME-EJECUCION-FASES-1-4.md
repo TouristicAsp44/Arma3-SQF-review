@@ -1,7 +1,7 @@
-# INFORME DE EJECUCIÓN Y AUDITORÍA DE CIERRE: FASES 1 A 4 (VERSIÓN 4.3)
+# INFORME DE EJECUCIÓN Y AUDITORÍA DE CIERRE: FASES 1 A 4 (VERSIÓN 4.4)
 
 **Documento:** `INFORME-EJECUCION-FASES-1-4.md`  
-**Versión:** 4.3 (Revelación de Denominadores Reales de Cobertura, Cierre Técnico Definitivo y Registro de Deuda Técnica Observada)  
+**Versión:** 4.4 (Cierre Definitivo con Errata de Precisión Técnica en Cobertura Documental y Salvedad de Subconjunto de API)  
 **Fecha:** 12 de Noviembre de 2026  
 **Plan Ejecutado:** `PLAN-APLICACION.md` Versión 2.1  
 **Plugin Destino:** `arma3-sqf-review` (`C:\Users\Touri\.gemini\config\plugins\arma3-sqf-review`)  
@@ -10,7 +10,7 @@
 
 ---
 
-## 1. Veredicto Global de Ejecución (Versión 4.3)
+## 1. Veredicto Global de Ejecución (Versión 4.4)
 
 ### 1.1 Declaración Unívoca de Cierre Técnico
 > [!IMPORTANT]
@@ -35,6 +35,16 @@ Tras la subsanación integral del **Defecto 11** (cobertura nula del Ítem 9 en 
    - **Decisión 2 (Versión del Manifiesto):** Manifiesto `plugin.json` respaldado y actualizado a versión `1.1.0`, documentando la consulta prioritaria contra `a3ref` en tiempo de ejecución.
    - **Decisión 3 (Dependencia Estática):** `sqflint==0.3.2` declarada como dependencia formal en `requirements.txt` respaldado, fijada a la versión instalada en la máquina del usuario, conservando en la ficha y documentación la nota de dependencia de entorno preinstalada.
 7. **Entrega de la Documentación Operativa Completa:** Entregados los tres archivos de cierre definitivos: `FICHA-INTEGRACION-A3REF.md`, `INFORME-PRUEBA-REAL.md` (v2.1) e `INFORME-EJECUCION-FASES-1-4.md` (v4.3).
+
+---
+
+### 1.4 Nota de Errata de Precisión Técnica y Salvedad de API (Versión 4.4)
+> [!NOTE]
+> **Errata de Honestidad Técnica en Cobertura Documental:**  
+> En la versión 2.1 de `INFORME-PRUEBA-REAL.md` se afirmó en el desglose de candidatos que los comandos del Grupo 2 fueron validados respecto a su *«compatibilidad con servidor dedicado»*. Dicha formulación constituía un sobrestatement documental que queda formalmente rectificado:  
+> 1. **Alcance Real de la Ruta del Ítem 9:** La ruta de verificación del Ítem 9 comprueba exclusivamente en tiempo de ejecución: que el símbolo existe en el catálogo oficial de la réplica (`a3ref`), que su grafía coincide de forma exacta con la grafía canónica, cuál es su estado documental oficial (`ok`), desde qué versión del motor está disponible y cuál es su URL oficial tomada del registro.  
+> 2. **Desacoplamiento de Servidor Dedicado y Matriz de Localidad:** La dimensión de compatibilidad con servidor dedicado no forma parte de la verificación del Ítem 9: reside en la matriz certificada de localidad y se consulta por la ruta de auditoría del subagente `sqf-locality-auditor`. Ninguna afirmación de compatibilidad con servidor dedicado puede atribuirse a la fila del Ítem 9.  
+> 3. **Salvedad del Subconjunto de Comandos de API (12 propiamente dichos):** Dentro del grupo de 15 candidatos, tres símbolos no constituyen comandos de API en sentido estricto sino primitivas del lenguaje o del motor (`call`, `sleep`, `player`), por lo que el subconjunto de comandos de API propiamente dichos es de 12. Se conservan los recuentos de 15 y 9 para preservar la coherencia aritmética con el total de 24 candidatos contrastados.
 
 ---
 
@@ -673,10 +683,11 @@ Para garantizar la honestidad técnica absoluta y proporcionar transparencia mat
      - *Literal booleano:* `true` (1)
      - *Recuento:* **9 comandos.**
      - *Evaluación Documental:* Este primer grupo no aporta valor documental sustantivo sobre la API del motor de juego, tratándose de primitivas gramaticales y estructuras de control del lenguaje SQF.
-   * **Grupo 2: Comandos de API propiamente dichos (15 comandos):**
+   * **Grupo 2: Comandos de API propiamente dichos (15 comandos)** *(con la salvedad de que 3 corresponden a primitivas del lenguaje o del motor, siendo 12 los comandos de API en sentido estricto)*:
      - `addCamShake`, `call`, `deleteVehicle`, `drop`, `enableCamShake`, `playSound`, `playSound3D`, `playableUnits`, `player`, `ppEffectCommitted`, `ppEffectDestroy`, `publicVariable`, `setWind`, `sleep`, `switchableUnits`.
-     - *Recuento:* **15 comandos.**
-     - *Evaluación Documental:* Este segundo grupo representa la **verificación efectiva y sustancial contra la réplica offline `a3ref`**. Cada comando fue contrastado respecto a su versión mínima requerida, su disponibilidad en el snapshot dinámico (`2c396002987f3ab536931b5a4f627ae03397d449`) y su estado documental oficial (todos en estado `ok`).
+     - *Recuento:* **15 comandos.** *(Salvedad técnica: dentro de este grupo de 15, tres símbolos no constituyen comandos de API en sentido estricto sino primitivas del lenguaje o del motor —específicamente `call`, `sleep` y `player`—, por lo que el subconjunto de comandos de API propiamente dichos es de 12. Se conservan los recuentos de 15 y 9 para mantener la coherencia aritmética con el total de 24 candidatos contrastados).*
+     - *Evaluación Documental:* Este segundo grupo representa la **verificación efectiva contra la réplica offline `a3ref`**. La ruta de verificación del Ítem 9 comprueba en tiempo de ejecución: que el símbolo existe en el catálogo oficial de la réplica, que su grafía coincide de forma exacta con la grafía canónica, cuál es su estado documental oficial (todos verificados en estado `ok`), desde qué versión del motor está disponible y cuál es su URL oficial tomada del registro.
+     - *Aclaración sobre Servidor Dedicado:* La compatibilidad con servidor dedicado no forma parte de esta verificación y se consulta en la matriz certificada de localidad por la ruta de auditoría de localidad, de modo que ninguna afirmación de compatibilidad con servidor dedicado puede atribuirse a la fila del Ítem 9.
 
 Con este desglose, el lector puede calibrar con exactitud lo que la cifra de 24 candidatos contrastados representa.
 
