@@ -190,6 +190,10 @@ python "C:\Users\Touri\.gemini\config\plugins\arma3-sqf-review\skills\arma3-sqf-
 
 ## 6. Procedimiento de Verificación del Snapshot
 
+> [!IMPORTANT]
+> **Documento de Referencia para la Continuidad Operativa:**  
+> El documento `INFORME-CIERRE-PROYECTO.md` es el documento oficial de referencia para la continuidad operativa del plugin y es el que fija formalmente la huella criptográfica de referencia del snapshot Biki (`2c396002987f3ab536931b5a4f627ae03397d449`).
+
 Para certificar que el pipeline está utilizando el snapshot esperado y no una fuente degradada:
 1. Ejecute `python sqf_wiki_reader.py --sha`.
 2. Inspeccione la salida de cualquier revisión con `sqf_orchestrator.py`: la fila del Ítem 9 incluye la procedencia exacta:
