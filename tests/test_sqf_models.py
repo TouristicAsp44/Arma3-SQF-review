@@ -174,3 +174,149 @@ def test_sibling_module_import_from_plugin_root():
     assert hasattr(sqf_wiki_reader, "lookup_syntax_symbol")
     assert hasattr(sqf_models, "parse_sqflint_output")
 
+
+def test_item_9_folder_mode_with_unknown_identifier(tmp_path: Path):
+    """Demuestra que el modo carpeta extrae candidatos reales y reporta ausentes/bloqueantes asociados (Once.1)."""
+    from sqf_orchestrator import compute_item_9_report, read_sqf_file_robust
+
+    f1 = tmp_path / "valid.sqf"
+    f1.write_text('hint "hola";\nsleep 5;\n', encoding="utf-8")
+
+    f2 = tmp_path / "with_unknown.sqf"
+    f2.write_text('simboloInexistente123;\nplayer setPos [0,0,0];\n', encoding="utf-8")
+
+    file_sources = {}
+    for f in [f1, f2]:
+        c, err = read_sqf_file_robust(str(f))
+        assert err is None
+        file_sources[str(f)] = c
+
+    f_unknown = SQFFinding(
+        severity="BLOQUEANTE",
+        file=str(f2),
+        line=1,
+        description="error de sintaxis: <Variable(simboloInexistente123)> no interpretable",
+        evidence="simboloInexistente123;",
+        discipline="Sintaxis",
+    )
+    stdout = f"{f2}:1: error: can't interpret statement: <Variable(simboloInexistente123)>\n"
+
+    report = compute_item_9_report(
+        findings=[f_unknown],
+        rc=1,
+        stdout=stdout,
+        target=str(tmp_path),
+        file_sources=file_sources,
+    )
+
+    assert "0 de 0" not in report
+    assert "1 ausentes (simboloInexistente123)" in report
+    assert "1 bloqueantes asociados" in report
+    assert "NO VERIFICADO" in report
+
+
+def test_item_9_file_mode_parity(tmp_path: Path):
+    """Demuestra que el modo archivo individual mantiene paridad con modo carpeta (Once.2)."""
+    from sqf_orchestrator import compute_item_9_report, read_sqf_file_robust
+
+    f2 = tmp_path / "single_unknown.sqf"
+    code = 'simboloInexistente123;\nplayer setPos [0,0,0];\n'
+    f2.write_text(code, encoding="utf-8")
+
+    c, err = read_sqf_file_robust(str(f2))
+    assert err is None
+
+    f_unknown = SQFFinding(
+        severity="BLOQUEANTE",
+        file=str(f2),
+        line=1,
+        description="error de sintaxis: <Variable(simboloInexistente123)>",
+        evidence="simboloInexistente123;",
+        discipline="Sintaxis",
+    )
+    stdout = f"{f2}:1: error: can't interpret statement: <Variable(simboloInexistente123)>\n"
+
+    report = compute_item_9_report(
+        findings=[f_unknown],
+        rc=1,
+        stdout=stdout,
+        source_code=c,
+        target=str(f2),
+    )
+
+    assert "0 de 0" not in report
+    assert "1 ausentes (simboloInexistente123)" in report
+    assert "1 bloqueantes asociados" in report
+    assert "NO VERIFICADO" in report
+
+
+def test_utf16_bom_encoding_detection(tmp_path: Path):
+    """Demuestra que un archivo SQF en UTF-16 LE con BOM se decodifica y analiza sin descartarse en silencio (Once.3)."""
+    from sqf_orchestrator import compute_item_9_report, read_sqf_file_robust
+
+    f_utf16 = tmp_path / "sample_utf16.sqf"
+    text_content = 'hint "Mensaje en UTF-16";\nsleep 10;\n'
+    # Escribir con BOM explícito UTF-16 LE
+    f_utf16.write_bytes(b"\xff\xfe" + text_content.encode("utf-16-le"))
+
+    decoded_text, err = read_sqf_file_robust(str(f_utf16))
+    assert err is None
+    assert "hint" in decoded_text
+    assert "sleep" in decoded_text
+
+    stdout = f"{f_utf16}:0: info: OK\n"
+    report = compute_item_9_report(
+        findings=[],
+        rc=0,
+        stdout=stdout,
+        source_code=decoded_text,
+        target=str(f_utf16),
+    )
+
+    assert "0 de 0" not in report
+    assert "PASA" in report
+    assert "0 ausentes" in report
+    assert "0 bloqueantes asociados" in report
+
+
+def test_summary_incorporates_item_9_unverified_on_missing_linter():
+    """Demuestra que el resumen incorpora NO VERIFICADO cuando el Ítem 9 está en NO VERIFICADO (Once.4)."""
+    from sqf_models import format_findings_report
+    from sqf_orchestrator import compute_item_9_report
+
+    # Caso A: Analizador estático no disponible
+    finding_unv = SQFFinding(
+        severity="NO_VERIFICADO",
+        file="test.sqf",
+        line=0,
+        description="Linter no disponible (SQFLINT_NO_DISPONIBLE)",
+        evidence="",
+        discipline="Sintaxis",
+    )
+    item_9_a = compute_item_9_report([finding_unv], rc=3, stdout="SQFLINT_NO_DISPONIBLE")
+    assert "NO VERIFICADO" in item_9_a
+    report_a = format_findings_report([finding_unv], item_9_status="NO_VERIFICADO")
+    assert "RESUMEN: bloqueantes=0; sugerencias=0; no_verificado=1" in report_a
+    assert "no_verificado=0" not in report_a
+
+    # Caso B: Sin hallazgos NO_VERIFICADO en findings, pero Ítem 9 en NO VERIFICADO por símbolo ausente
+    f_bloq = SQFFinding(
+        severity="BLOQUEANTE",
+        file="test.sqf",
+        line=1,
+        description="error can't interpret <Variable(simboloAusente999)>",
+        evidence="simboloAusente999;",
+        discipline="Sintaxis",
+    )
+    item_9_b = compute_item_9_report(
+        [f_bloq],
+        rc=1,
+        stdout="test.sqf:1: error: <Variable(simboloAusente999)>",
+        source_code="",
+    )
+    assert "NO VERIFICADO" in item_9_b
+    report_b = format_findings_report([f_bloq], item_9_status="NO_VERIFICADO")
+    # El resumen debe reportar no_verificado=1 reflejando el Ítem 9 sin contradecirse
+    assert "RESUMEN: bloqueantes=1; sugerencias=0; no_verificado=1" in report_b
+    assert "no_verificado=0" not in report_b
+

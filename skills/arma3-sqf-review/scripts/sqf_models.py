@@ -303,7 +303,7 @@ def determine_escalation_reason(files: dict[str, str] | list[Any], mode: str) ->
     return "Configuración manual o modo previo preservado"
 
 
-def format_findings_report(findings: list[SQFFinding]) -> str:
+def format_findings_report(findings: list[SQFFinding], item_9_status: str | None = None) -> str:
     """Produce el informe de hallazgos estructurado de una línea por hallazgo más RESUMEN."""
     lines: list[str] = []
     bloqueantes = 0
@@ -318,6 +318,9 @@ def format_findings_report(findings: list[SQFFinding]) -> str:
             sugerencias += 1
         elif f.severity == "NO_VERIFICADO":
             no_verificado += 1
+
+    if item_9_status == "NO_VERIFICADO" and no_verificado == 0:
+        no_verificado = 1
 
     lines.append(f"RESUMEN: bloqueantes={bloqueantes}; sugerencias={sugerencias}; no_verificado={no_verificado}")
     return "\n".join(lines)

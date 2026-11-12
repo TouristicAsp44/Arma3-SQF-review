@@ -51,59 +51,159 @@ def default_mock_agent(prompt: str) -> str:
     return "private _resultado = 42;\n"
 
 
+def read_sqf_file_robust(path: str) -> tuple[str, str | None]:
+    """Lee un archivo SQF con detección de codificación y BOM.
+
+    Soporta UTF-8 (con y sin BOM), UTF-16 LE/BE (con BOM) y Windows-1252.
+    Retorna (contenido_texto, mensaje_error). Si la codificación no es soportada,
+    retorna ("", mensaje_error).
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        return "", f"Error de E/S al leer archivo: {e}"
+
+    if raw.startswith(b"\xef\xbb\xbf"):
+        try:
+            return raw.decode("utf-8-sig"), None
+        except UnicodeDecodeError as e:
+            return "", f"BOM UTF-8 presente pero fallo de decodificación: {e}"
+    elif raw.startswith(b"\xff\xfe"):
+        try:
+            return raw.decode("utf-16-le"), None
+        except UnicodeDecodeError as e:
+            return "", f"BOM UTF-16 LE presente pero fallo de decodificación: {e}"
+    elif raw.startswith(b"\xfe\xff"):
+        try:
+            return raw.decode("utf-16-be"), None
+        except UnicodeDecodeError as e:
+            return "", f"BOM UTF-16 BE presente pero fallo de decodificación: {e}"
+
+    # Sin BOM: probar UTF-8 estricto
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        pass
+
+    # Fallback a Windows-1252 / ANSI común en Arma 3
+    try:
+        return raw.decode("windows-1252"), None
+    except UnicodeDecodeError as e:
+        return "", f"Codificación no soportada: {e}"
+
+
 def compute_item_9_report(
     findings: list[SQFFinding],
     rc: int,
     stdout: str,
-    source_code: str,
+    source_code: str = "",
     wiki_path: str | None = None,
+    target: str | None = None,
+    file_sources: dict[str, str] | None = None,
 ) -> str:
-    """Calcula y formatea la fila del Ítem 9 del Checklist con cobertura de tokens y procedencia dinámica (D1, D7)."""
+    """Calcula y formatea la fila del Ítem 9 del Checklist con cobertura de tokens y procedencia dinámica (D1, D7).
+
+    Soporta análisis de archivo individual o directorio completo, calculando candidatos
+    y restringiendo la asociación de bloqueantes por archivo.
+    """
     wiki_root = resolve_wiki_root(wiki_path)
     data_sha = get_data_git_sha(wiki_root)
     if rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout or any(f.severity == "NO_VERIFICADO" and "SQFLINT" in f.description for f in findings):
         return f"| 9. Verificación de Comandos en Wiki / Biki | NO VERIFICADO | sqflint no disponible en el host (SQFLINT_NO_DISPONIBLE); análisis estático omitido (commit: {data_sha}). |"
 
-    # Fuente 1 (Obligatoria): Identificadores que el analizador efectivamente reportó
-    linter_tokens = set(re.findall(r"<Variable\(([a-zA-Z0-9_]+)\)>", stdout))
-    candidates = set(linter_tokens)
+    # Preparar mapa de archivos a fuentes
+    sources: dict[str, str] = {}
+    if file_sources:
+        sources = dict(file_sources)
+    elif target and os.path.isfile(target):
+        sources = {os.path.abspath(target): source_code}
+    elif source_code:
+        sources = {"": source_code}
 
-    # Fuente 2 (Opcional, D1): Identificadores que inician sentencia en el código fuente,
-    # PERO únicamente si existen en el catálogo con grafía canónica exacta.
-    # Esta segunda fuente NUNCA puede generar ausentes.
-    if source_code:
-        clean = re.sub(r'/\*[\s\S]*?\*/|//.*|"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'', ' ', source_code)
-        for tok in re.findall(r'(?:^|[;{}])\s*([a-zA-Z0-9_]+)\b(?!=)', clean, re.MULTILINE):
+    if not sources:
+        sources[""] = ""
+
+    per_file_candidates: dict[str, set[str]] = {}
+    per_file_contrastados: dict[str, set[str]] = {}
+    per_file_ausentes: dict[str, set[str]] = {}
+    per_file_bloqueantes: dict[str, set[str]] = {}
+
+    for fpath, fcode in sorted(sources.items()):
+        norm_fpath = os.path.normcase(os.path.normpath(fpath)) if fpath else ""
+        file_findings = [
+            f for f in findings
+            if (not norm_fpath)
+            or os.path.normcase(os.path.normpath(f.file)) == norm_fpath
+            or os.path.basename(f.file) == os.path.basename(fpath)
+            or (not f.file)
+        ]
+
+        # Fuente 1 (Obligatoria): Identificadores que el analizador efectivamente reportó
+        file_linter_tokens: set[str] = set()
+        for f in file_findings:
+            for m in re.finditer(r"<Variable\(([a-zA-Z0-9_]+)\)>", f.description + " " + f.evidence):
+                file_linter_tokens.add(m.group(1))
+
+        if fpath:
+            base = os.path.basename(fpath)
+            for line in stdout.splitlines():
+                if base in line and "<Variable(" in line:
+                    for m in re.finditer(r"<Variable\(([a-zA-Z0-9_]+)\)>", line):
+                        file_linter_tokens.add(m.group(1))
+        elif not file_linter_tokens:
+            for m in re.finditer(r"<Variable\(([a-zA-Z0-9_]+)\)>", stdout):
+                file_linter_tokens.add(m.group(1))
+
+        candidates = set(file_linter_tokens)
+
+        # Fuente 2 (Opcional, D1): Identificadores que inician sentencia en el código fuente,
+        # PERO únicamente si existen en el catálogo con grafía canónica exacta.
+        if fcode:
+            clean = re.sub(r'/\*[\s\S]*?\*/|//.*|"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'', ' ', fcode)
+            for tok in re.findall(r'(?:^|[;{}])\s*([a-zA-Z0-9_]+)\b(?!=)', clean, re.MULTILINE):
+                info = lookup_syntax_symbol(tok, wiki_root)
+                if info and tok == info.get("canonical_name"):
+                    candidates.add(tok)
+
+        contrastados: set[str] = set()
+        ausentes: set[str] = set()
+        for tok in candidates:
             info = lookup_syntax_symbol(tok, wiki_root)
             if info and tok == info.get("canonical_name"):
-                candidates.add(tok)
+                contrastados.add(tok)
+            else:
+                ausentes.add(tok)
 
-    total = len(candidates)
-    contrastados = 0
-    ausentes = []
+        # Regla de origen corregida con límites de palabra para evitar subcadenas (D7),
+        # circunscrita estrictamente a los hallazgos del mismo archivo (Requerimiento 6):
+        bloqueantes: set[str] = set()
+        for tok in ausentes:
+            pat = re.compile(r"\b" + re.escape(tok) + r"\b|<Variable\(" + re.escape(tok) + r"\)>", re.IGNORECASE)
+            is_associated = any(
+                f.severity == "BLOQUEANTE"
+                and (pat.search(f.description) is not None or pat.search(f.evidence) is not None)
+                for f in file_findings
+            )
+            if is_associated:
+                bloqueantes.add(tok)
 
-    for token in sorted(candidates):
-        info = lookup_syntax_symbol(token, wiki_root)
-        if info and token == info.get("canonical_name"):
-            contrastados += 1
-        else:
-            ausentes.append(token)
+        per_file_candidates[fpath] = candidates
+        per_file_contrastados[fpath] = contrastados
+        per_file_ausentes[fpath] = ausentes
+        per_file_bloqueantes[fpath] = bloqueantes
 
-    # Regla de origen corregida con límites de palabra para evitar subcadenas (D7):
-    bloqueantes_asociados = []
-    for tok in ausentes:
-        pattern = re.compile(r"\b" + re.escape(tok) + r"\b|<Variable\(" + re.escape(tok) + r"\)>", re.IGNORECASE)
-        is_associated = any(
-            f.severity == "BLOQUEANTE"
-            and (pattern.search(f.description) is not None or pattern.search(f.evidence) is not None)
-            for f in findings
-        )
-        if is_associated:
-            bloqueantes_asociados.append(tok)
+    all_candidates = set.union(*per_file_candidates.values()) if per_file_candidates else set()
+    all_contrastados = set.union(*per_file_contrastados.values()) if per_file_contrastados else set()
+    all_ausentes = set.union(*per_file_ausentes.values()) if per_file_ausentes else set()
+    all_bloqueantes = set.union(*per_file_bloqueantes.values()) if per_file_bloqueantes else set()
 
-    bloqueantes_count = len(bloqueantes_asociados)
+    total = len(all_candidates)
+    contrastados_count = len(all_contrastados)
+    ausentes_count = len(all_ausentes)
+    bloqueantes_count = len(all_bloqueantes)
 
-    if total > 0 and contrastados == total and bloqueantes_count == 0:
+    if total > 0 and contrastados_count == total and bloqueantes_count == 0:
         estado = "PASA"
         desc = (
             f"100% de tokens candidatos del código ({total}/{total}) contrastados contra "
@@ -111,12 +211,18 @@ def compute_item_9_report(
         )
     else:
         estado = "NO VERIFICADO"
-        aus_str = f" ({', '.join(sorted(ausentes))})" if ausentes else ""
-        desc = (
-            f"{contrastados} de {total} tokens candidatos contrastados contra "
-            f"réplica offline a3ref (commit: {data_sha}; {len(ausentes)} ausentes{aus_str}; "
-            f"{bloqueantes_count} bloqueantes asociados)."
-        )
+        aus_str = f" ({', '.join(sorted(all_ausentes))})" if all_ausentes else ""
+        if total == 0:
+            desc = (
+                f"0 de 0 tokens candidatos del código (causa: no se detectaron sentencias SQF analizables en los archivos examinados; "
+                f"commit: {data_sha}; 0 ausentes; 0 bloqueantes asociados)."
+            )
+        else:
+            desc = (
+                f"{contrastados_count} de {total} tokens candidatos contrastados contra "
+                f"réplica offline a3ref (commit: {data_sha}; {ausentes_count} ausentes{aus_str}; "
+                f"{bloqueantes_count} bloqueantes asociados)."
+            )
 
     return f"| 9. Verificación de Comandos en Wiki / Biki | {estado} | Regla de Cobertura Documental:\n- {desc} |"
 
@@ -456,19 +562,50 @@ def run_lint(
         return 1
 
     source_code = ""
+    file_sources: dict[str, str] = {}
+    encoding_findings: list[SQFFinding] = []
+
     if os.path.isfile(resolved_target):
-        try:
-            source_code = Path(resolved_target).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
+        content, err = read_sqf_file_robust(resolved_target)
+        if err:
+            finding = SQFFinding(
+                severity="NO_VERIFICADO",
+                file=resolved_target,
+                line=0,
+                description=f"Codificación no soportada ({err})",
+                evidence=err,
+                discipline="Sistema",
+            )
+            item_9 = compute_item_9_report([finding], 0, "", source_code="", wiki_path=wiki_path, target=resolved_target)
+            report = format_findings_report([finding], item_9_status="NO_VERIFICADO")
+            print(report)
+            print(f"\n{item_9}")
+            print("Estado: NO VERIFICADO (codificación no soportada)")
+            return 10
+        source_code = content
+        file_sources[resolved_target] = content
 
     if os.path.isdir(resolved_target):
-        has_sqf = False
-        for _, _, f_names in os.walk(resolved_target):
-            if any(f.lower().endswith(".sqf") for f in f_names):
-                has_sqf = True
-                break
-        if not has_sqf:
+        for root, _, filenames in os.walk(resolved_target):
+            for f in sorted(filenames):
+                if f.lower().endswith(".sqf"):
+                    fpath = os.path.join(root, f)
+                    content, err = read_sqf_file_robust(fpath)
+                    if err:
+                        encoding_findings.append(
+                            SQFFinding(
+                                severity="NO_VERIFICADO",
+                                file=fpath,
+                                line=0,
+                                description=f"Codificación no soportada ({err})",
+                                evidence=err,
+                                discipline="Sistema",
+                            )
+                        )
+                    else:
+                        file_sources[fpath] = content
+
+        if not file_sources and not encoding_findings:
             print("[NO_VERIFICADO] 0: (Sistema): no se encontraron archivos .sqf; el analisis no se ejecuto")
             print("RESUMEN: bloqueantes=0; sugerencias=0; no_verificado=1")
             print("ESTADO: NO VERIFICADO")
@@ -488,9 +625,12 @@ def run_lint(
             evidence=f"No se encontró el ejecutable: {resolved_linter}",
             discipline="Sintaxis",
         )
-        report = format_findings_report([finding])
+        item_9 = compute_item_9_report(
+            [finding], 3, "SQFLINT_NO_DISPONIBLE", source_code, wiki_path,
+            target=resolved_target, file_sources=file_sources
+        )
+        report = format_findings_report([finding], item_9_status="NO_VERIFICADO")
         print(report)
-        item_9 = compute_item_9_report([finding], 3, "SQFLINT_NO_DISPONIBLE", source_code, wiki_path)
         print(f"\n{item_9}")
         print("Estado: NO VERIFICADO (el linter no está disponible)")
         return 10
@@ -520,10 +660,16 @@ def run_lint(
         stdout = f"SQFLINT_NO_DISPONIBLE: error al invocar linter ({e})"
 
     findings = parse_sqflint_output(rc, stdout, source_code=source_code)
-    report = format_findings_report(findings)
-    print(report)
+    if encoding_findings:
+        findings.extend(encoding_findings)
 
-    item_9 = compute_item_9_report(findings, rc, stdout, source_code, wiki_path)
+    item_9 = compute_item_9_report(
+        findings, rc, stdout, source_code=source_code, wiki_path=wiki_path,
+        target=resolved_target, file_sources=file_sources
+    )
+    item_9_status = "NO_VERIFICADO" if ("| NO VERIFICADO |" in item_9) else "PASA"
+    report = format_findings_report(findings, item_9_status=item_9_status)
+    print(report)
     print(f"\n{item_9}")
 
     if any(f.severity == "NO_VERIFICADO" for f in findings) or rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout:
