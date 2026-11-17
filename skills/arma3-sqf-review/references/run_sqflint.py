@@ -154,7 +154,7 @@ def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], l
             if re.search(r":\s*error:", normalized, re.IGNORECASE) or re.search(r":\s*warning:", normalized, re.IGNORECASE):
                 file_errors.append(normalized)
 
-    has_error = (rc != 0) or any(re.search(r":\s*error:", l, re.IGNORECASE) for l in file_lines)
+    has_error = (rc != 0) or any(re.search(r":\s*error:", line_item, re.IGNORECASE) for line_item in file_lines)
     if has_error:
         status_tag = f"ERRORES (exit {rc})"
         if not file_lines and rc != 0:
@@ -176,8 +176,8 @@ def _emit_linter_results(
         print(f"Total archivos analizados: {total_files}")
         for f, status_tag, lines in detailed_results:
             print(f"== {f} ({status_tag}) ==")
-            for l in lines:
-                print(f"  {l}")
+            for line_item in lines:
+                print(f"  {line_item}")
         warnings_only = [e for e in error_lines if re.search(r":\s*warning:", e, re.IGNORECASE)]
         if warnings_only:
             print("\n--- ADVERTENCIAS (archivo:línea) ---")
@@ -194,8 +194,8 @@ def _emit_linter_results(
         print("\n--- DESGLOSE POR ARCHIVO ---")
         for f, status_tag, lines in detailed_results:
             print(f"== {f} ({status_tag}) ==")
-            for l in lines:
-                print(f"  {l}")
+            for line_item in lines:
+                print(f"  {line_item}")
         sys.exit(1)
 
 

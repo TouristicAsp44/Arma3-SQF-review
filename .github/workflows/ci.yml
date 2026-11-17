@@ -50,7 +50,10 @@ jobs:
         with:
           repository: a3ref/data
           path: Wiki/data
-          depth: 1
+          fetch-depth: 1
+
+      - name: Configure Git Safe Directory
+        run: git config --global --add safe.directory "*"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
