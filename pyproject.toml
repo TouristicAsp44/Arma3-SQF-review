@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arma3-sqf-review"
-version = "0.1.0"
+version = "1.1.0"
 description = "Plugin y suite de análisis y revisión SQF para Arma 3"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = []
 
