@@ -10,12 +10,20 @@ Códigos de salida:
   3: SQFLINT_NO_DISPONIBLE (el linter no está instalado ni accesible)
 """
 import glob
+import io
 import os
 import re
 import shutil
 import site
 import subprocess
 import sys
+
+try:
+    import sqflint
+    from sqf.exceptions import SQFParserError
+    HAS_SQFLINT_MODULE = True
+except ImportError:
+    HAS_SQFLINT_MODULE = False
 
 
 def locate_sqflint():
@@ -26,19 +34,9 @@ def locate_sqflint():
     3. Carpetas Scripts / bin del usuario (APPDATA, site.getuserbase(), sys.prefix).
     Retorna una lista con el comando base o None si no está disponible.
     """
-    # 1. Prioridad: invocación directa como módulo en el intérprete actual
-    try:
-        res = subprocess.run(
-            [sys.executable, "-m", "sqflint", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if res.returncode == 0:
-            return [sys.executable, "-m", "sqflint"]
-    except (subprocess.SubprocessError, OSError):
-        pass
+    # 1. Prioridad: módulo python disponible en el entorno activo
+    if HAS_SQFLINT_MODULE:
+        return [sys.executable, "-m", "sqflint"]
 
     # 2. Búsqueda directa en PATH
     exe = shutil.which("sqflint")
@@ -104,7 +102,7 @@ def parse_error_line(file_path, line):
         return f"{file_path}:{line_num}: {level}: {msg}"
     if re.match(r"^(.*?):(\d+):\s*(error|warning):\s*(.*)$", line, re.IGNORECASE):
         return line
-    return f"{file_path}:{line}"
+    return f"{file_path}:1: error: {line}"
 
 
 def _collect_target_files(target: str) -> list[str]:
@@ -121,26 +119,41 @@ def _collect_target_files(target: str) -> list[str]:
 
 
 def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], list[str], bool]:
-    cmd = sqflint_cmd + ["-e", "e", f]
-    sub_env = os.environ.copy()
-    sub_env["PYTHONUTF8"] = "1"
-    try:
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=sub_env,
-            check=False,
-            timeout=30,
-        )
-        output = res.stdout.strip()
-        rc = res.returncode
-    except (subprocess.SubprocessError, OSError) as ex:
-        output = f"Excepción al ejecutar sqflint: {ex}"
-        rc = 1
+    if HAS_SQFLINT_MODULE and sqflint_cmd == [sys.executable, "-m", "sqflint"]:
+        # Análisis directo en proceso: máxima portabilidad y velocidad multiplataforma
+        try:
+            with open(f, "r", encoding="utf-8", errors="replace") as sqf_file:
+                code_text = sqf_file.read()
+            writer = io.StringIO()
+            exc_list = []
+            sqflint.analyze(code_text, writer, exc_list)
+            output = writer.getvalue().strip()
+            errors = [e for e in exc_list if isinstance(e, SQFParserError)]
+            rc = 1 if errors else 0
+        except Exception as ex:
+            output = f"Excepción al ejecutar sqflint: {ex}"
+            rc = 1
+    else:
+        cmd = sqflint_cmd + ["-e", "e", f]
+        sub_env = os.environ.copy()
+        sub_env["PYTHONUTF8"] = "1"
+        try:
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=sub_env,
+                check=False,
+                timeout=30,
+            )
+            output = res.stdout.strip()
+            rc = res.returncode
+        except (subprocess.SubprocessError, OSError) as ex:
+            output = f"Excepción al ejecutar sqflint: {ex}"
+            rc = 1
 
     file_lines = []
     file_errors = []
