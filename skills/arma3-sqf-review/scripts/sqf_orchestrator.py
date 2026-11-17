@@ -5,19 +5,17 @@ archivo de notas. Todo anclado al directorio de trabajo experimental.
 """
 
 import argparse
-from collections.abc import Callable
 import datetime
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 
 from sqf_models import (
     SQFFinding,
-    check_escalation_needed,
     check_escalation_needed_for_files,
     determine_escalation_reason,
     format_findings_report,

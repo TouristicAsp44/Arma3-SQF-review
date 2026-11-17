@@ -13,9 +13,9 @@ Reproduce con fidelidad los formatos reales de sqflint:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 
 def simulate_linter(target: Path, forced_rc: int | None = None) -> tuple[int, str]:

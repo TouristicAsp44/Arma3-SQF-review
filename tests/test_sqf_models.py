@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 from sqf_models import (
-    SQFFinding,
     ScopeStatus,
+    SQFFinding,
     check_escalation_needed,
     check_escalation_needed_for_files,
     evaluate_token_scope,
@@ -169,8 +169,8 @@ def test_sibling_module_import_from_plugin_root():
     plugin_root = Path(__file__).resolve().parent.parent
     scripts_dir = plugin_root / "skills" / "arma3-sqf-review" / "scripts"
     assert str(scripts_dir) in sys.path or any(str(scripts_dir) in p for p in sys.path)
-    import sqf_wiki_reader
     import sqf_models
+    import sqf_wiki_reader
     assert hasattr(sqf_wiki_reader, "lookup_syntax_symbol")
     assert hasattr(sqf_models, "parse_sqflint_output")
 

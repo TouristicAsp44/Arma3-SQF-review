@@ -5,12 +5,11 @@
 # pruebas, asegura la inclusión de su directorio contenedor en 'sys.path' para
 # permitir la resolución directa de su módulo hermano 'sqf_wiki_reader.py'.
 # ==============================================================================
-import os
-from pathlib import Path
 import re
 import sys
 from dataclasses import asdict, dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -54,7 +53,7 @@ def strip_comments_and_strings(code: str) -> str:
     """Elimina comentarios de línea y bloque, y sustituye contenido de cadenas por espacios."""
     def replacer(match):
         s = match.group(0)
-        if s.startswith('/') or s.startswith('/*'):
+        if s.startswith(('/', '/*')):
             return " " * len(s)
         # Cadena entre comillas: preservar las comillas delimitadoras pero vaciar el contenido interior
         return s[0] + (" " * (len(s) - 2)) + s[-1] if len(s) >= 2 else s
@@ -137,13 +136,7 @@ def parse_sqflint_output(rc: int, stdout: str, source_code: str = "") -> list[SQ
                 discipline = "Scope"
             elif cmd_name:
                 scope_status = evaluate_token_scope(cmd_name, source_code)
-                if scope_status == ScopeStatus.LOCAL:
-                    severity = "BLOQUEANTE"
-                    discipline = "Scope"
-                elif scope_status == ScopeStatus.MIXED:
-                    severity = "BLOQUEANTE"
-                    discipline = "Scope"
-                elif scope_status == ScopeStatus.INDETERMINATE:
+                if scope_status == ScopeStatus.LOCAL or scope_status == ScopeStatus.MIXED or scope_status == ScopeStatus.INDETERMINATE:
                     severity = "BLOQUEANTE"
                     discipline = "Scope"
                 else:  # ScopeStatus.NOT_LOCAL

@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
-from pathlib import Path
 import re
 import shutil
 import sys
+from pathlib import Path
 
 # Agregar carpeta scripts para importar sqf_wiki_reader
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -62,11 +62,11 @@ def sync_cache(
 
     header_cells = [c.strip() for c in lines[table_header_idx].split("|")[1:-1]]
     try:
-        col_cmd = header_cells.index("Comando")
+        header_cells.index("Comando")
         col_sintaxis = header_cells.index("Sintaxis")
         col_arg = header_cells.index("Arg")
         col_efe = header_cells.index("Efe")
-        col_nota = header_cells.index("Nota MP / Restricciones")
+        header_cells.index("Nota MP / Restricciones")
         col_url = header_cells.index("URL Biki")
         col_estado = header_cells.index("Estado")
         col_consultado = header_cells.index("Consultado")

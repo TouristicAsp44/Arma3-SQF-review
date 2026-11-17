@@ -18,19 +18,13 @@ Cubre todas las ramas de decisión:
 15. Wrapper con código de salida 3 (SQFLINT_NO_DISPONIBLE) -> severity NO_VERIFICADO.
 """
 
-from enum import Enum
 import inspect
-from pathlib import Path
 import re
-import sys
-import pytest
+from enum import Enum
+from pathlib import Path
 
 from sqf_wiki_reader import (
-    get_command,
-    get_function,
-    get_topic,
     lookup_syntax_symbol,
-    resolve_wiki_root,
 )
 
 try:
@@ -45,7 +39,7 @@ except (ImportError, AttributeError):
     def strip_comments_and_strings(code: str) -> str:
         def replacer(match):
             s = match.group(0)
-            if s.startswith('/') or s.startswith('/*'):
+            if s.startswith(('/', '/*')):
                 return " " * len(s)
             return s[0] + (" " * (len(s) - 2)) + s[-1] if len(s) >= 2 else s
         pattern = r'/\*[\s\S]*?\*/|//.*|"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\''
@@ -72,7 +66,8 @@ except (ImportError, AttributeError):
 
 
 def _parse_linter_with_context(rc: int, stdout: str, source_code: str = ""):
-    from sqf_models import SQFFinding, parse_sqflint_output as _orig
+    from sqf_models import SQFFinding
+    from sqf_models import parse_sqflint_output as _orig
     if rc == 3 or "SQFLINT_NO_DISPONIBLE" in stdout:
         return [SQFFinding(
             severity="NO_VERIFICADO",
