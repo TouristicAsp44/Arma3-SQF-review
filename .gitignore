@@ -1,17 +1,54 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 
-# Caches
+# Caches de herramientas y testing
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pytype/
+.pyre/
 
-# Respaldos
+# Cobertura de pruebas
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribución y empaquetado Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Editores y entornos de desarrollo
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Respaldos y temporales
 *.bak
 *.bak.*
 *.bak.latest
+*.tmp
 
 # Archivos comprimidos
 *.zip
@@ -19,3 +56,7 @@ __pycache__/
 *.gz
 *.rar
 *.7z
+
+# Logs y reportes locales
+*.log
+*.rpt
