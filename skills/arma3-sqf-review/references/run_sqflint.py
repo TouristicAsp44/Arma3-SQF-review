@@ -20,13 +20,27 @@ import sys
 
 def locate_sqflint():
     """
-    Localiza el ejecutable de sqflint en el sistema siguiendo una cascada multiplataforma:
-    1. PATH del sistema (shutil.which).
-    2. Carpetas Scripts / bin del usuario (APPDATA, site.getuserbase(), sys.prefix).
-    3. Módulo python ejecutable (python -m sqflint).
+    Localiza el ejecutable o comando de sqflint en el sistema siguiendo una cascada multiplataforma:
+    1. Invocación como módulo python en el intérprete actual (sys.executable -m sqflint).
+    2. Búsqueda en PATH del sistema (shutil.which).
+    3. Carpetas Scripts / bin del usuario (APPDATA, site.getuserbase(), sys.prefix).
     Retorna una lista con el comando base o None si no está disponible.
     """
-    # 1. Búsqueda directa en PATH
+    # 1. Prioridad: invocación directa como módulo en el intérprete actual
+    try:
+        res = subprocess.run(
+            [sys.executable, "-m", "sqflint", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if res.returncode == 0:
+            return [sys.executable, "-m", "sqflint"]
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # 2. Búsqueda directa en PATH
     exe = shutil.which("sqflint")
     if exe:
         return [exe]
@@ -35,7 +49,7 @@ def locate_sqflint():
         if exe:
             return [exe]
 
-    # 2. Búsqueda en rutas de usuario y prefijos del intérprete
+    # 3. Búsqueda en rutas de usuario y prefijos del intérprete
     candidates = []
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA", "")
@@ -72,20 +86,6 @@ def locate_sqflint():
             is_executable = (sys.platform == "win32") or os.access(path, os.X_OK)
             if is_executable:
                 return [path]
-
-    # 3. Fallback a invocación por módulo: python -m sqflint
-    try:
-        res = subprocess.run(
-            [sys.executable, "-m", "sqflint", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if res.returncode == 0:
-            return [sys.executable, "-m", "sqflint"]
-    except (subprocess.SubprocessError, OSError):
-        pass
 
     return None
 
@@ -158,7 +158,8 @@ def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], l
     if has_error:
         status_tag = f"ERRORES (exit {rc})"
         if not file_lines and rc != 0:
-            file_errors.append(f"{f}: Error de sintaxis desconocido (exit {rc})")
+            file_errors.append(f"{f}:1: error: Error de sintaxis desconocido (exit {rc})")
+            file_lines.append(file_errors[-1])
     else:
         status_tag = "OK"
 
