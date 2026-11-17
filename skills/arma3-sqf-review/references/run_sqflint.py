@@ -10,7 +10,6 @@ Códigos de salida:
   3: SQFLINT_NO_DISPONIBLE (el linter no está instalado ni accesible)
 """
 import glob
-import io
 import os
 import re
 import shutil
@@ -19,11 +18,12 @@ import subprocess
 import sys
 
 try:
-    import sqflint
+    import sqf.analyzer as sqf_analyzer
     from sqf.exceptions import SQFParserError
-    HAS_SQFLINT_MODULE = True
+    from sqf.parser import parse as sqf_parse
+    HAS_SQF_ENGINE = True
 except ImportError:
-    HAS_SQFLINT_MODULE = False
+    HAS_SQF_ENGINE = False
 
 
 def locate_sqflint():
@@ -34,8 +34,8 @@ def locate_sqflint():
     3. Carpetas Scripts / bin del usuario (APPDATA, site.getuserbase(), sys.prefix).
     Retorna una lista con el comando base o None si no está disponible.
     """
-    # 1. Prioridad: módulo python disponible en el entorno activo
-    if HAS_SQFLINT_MODULE:
+    # 1. Prioridad: motor sqf disponible en el entorno activo
+    if HAS_SQF_ENGINE:
         return [sys.executable, "-m", "sqflint"]
 
     # 2. Búsqueda directa en PATH
@@ -119,17 +119,28 @@ def _collect_target_files(target: str) -> list[str]:
 
 
 def _lint_single_file(f: str, sqflint_cmd: list[str]) -> tuple[str, list[str], list[str], bool]:
-    if HAS_SQFLINT_MODULE and sqflint_cmd == [sys.executable, "-m", "sqflint"]:
+    if HAS_SQF_ENGINE and sqflint_cmd == [sys.executable, "-m", "sqflint"]:
         # Análisis directo en proceso: máxima portabilidad y velocidad multiplataforma
         try:
             with open(f, "r", encoding="utf-8", errors="replace") as sqf_file:
                 code_text = sqf_file.read()
-            writer = io.StringIO()
-            exc_list = []
-            sqflint.analyze(code_text, writer, exc_list)
-            output = writer.getvalue().strip()
-            errors = [e for e in exc_list if isinstance(e, SQFParserError)]
-            rc = 1 if errors else 0
+            lines = []
+            has_parser_error = False
+            try:
+                res = sqf_parse(code_text)
+                for e in sqf_analyzer.analyze(res).exceptions:
+                    pos_line = e.position[0]
+                    pos_col = e.position[1] - 1
+                    lines.append(f"[{pos_line},{pos_col}]:{e.message}")
+                    if isinstance(e, SQFParserError):
+                        has_parser_error = True
+            except SQFParserError as e:
+                pos_line = e.position[0]
+                pos_col = e.position[1] - 1
+                lines.append(f"[{pos_line},{pos_col}]:{e.message}")
+                has_parser_error = True
+            output = "\n".join(lines).strip()
+            rc = 1 if has_parser_error else 0
         except Exception as ex:
             output = f"Excepción al ejecutar sqflint: {ex}"
             rc = 1
