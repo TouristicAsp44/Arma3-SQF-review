@@ -27,7 +27,24 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-DEFAULT_WIKI_PATH = Path(r"c:\Users\Touri\Documents\EDEN EDITOR\Skills Antigravity\Wiki\data")
+
+def _discover_default_wiki_path() -> Path:
+    """Descubre dinámicamente la ubicación de los datos de la wiki por proximidad o estándar de usuario."""
+    plugin_root = _SCRIPT_DIR.parents[2]
+    candidates = [
+        plugin_root.parent / "Wiki" / "data",
+        plugin_root.parent / "wiki" / "data",
+        plugin_root / "data",
+        Path.home() / ".a3ref" / "data",
+        Path.home() / ".gemini" / "wiki" / "data",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "syntax.json").exists():
+            return candidate
+    return plugin_root / "data"
+
+
+DEFAULT_WIKI_PATH = _discover_default_wiki_path()
 
 # Cachés indexadas por ruta canónica resuelta (D3)
 _syntax_caches: dict[str, dict[str, Any]] = {}
@@ -54,14 +71,14 @@ def resolve_wiki_root(override_path: str | Path | None = None) -> Path:
        en la variable de entorno no existe en disco, se retorna directamente
        (sin caer en silencio al valor por defecto) para que las operaciones subsecuentes
        reporten un estado NO VERIFICADO explícito.
-    3. Ruta local por defecto (DEFAULT_WIKI_PATH).
+    3. Ruta local por defecto (DEFAULT_WIKI_PATH descubierta dinámicamente).
     """
     if override_path:
         return Path(override_path)
     env_path = os.environ.get("A3REF_WIKI_PATH")
     if env_path is not None:
         return Path(env_path)
-    return DEFAULT_WIKI_PATH
+    return _discover_default_wiki_path()
 
 
 def get_data_git_sha(data_dir: Path | None = None) -> str:

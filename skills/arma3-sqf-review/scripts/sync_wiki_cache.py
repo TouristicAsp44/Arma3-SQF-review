@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 from pathlib import Path
 import re
 import shutil
@@ -27,7 +28,12 @@ from sqf_wiki_reader import (
 )
 
 DEFAULT_CACHE_PATH = SCRIPT_DIR.parent / "references" / "wiki-cache.md"
-BACKUP_DIR = Path(r"C:\Users\Touri\.gemini\antigravity\backups\arma3-sqf-review\references")
+BACKUP_DIR = Path(
+    os.environ.get(
+        "ARMA3_BACKUP_DIR",
+        str(Path.home() / ".gemini" / "antigravity" / "backups" / "arma3-sqf-review" / "references"),
+    )
+)
 
 
 def sync_cache(
