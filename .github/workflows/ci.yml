@@ -62,7 +62,7 @@ jobs:
         working-directory: arma3-sqf-review
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov anyio platformdirs
+          pip install -r requirements-dev.txt
 
       - name: Run Pytest Suite
         working-directory: arma3-sqf-review
