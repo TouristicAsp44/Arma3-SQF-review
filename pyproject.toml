@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
-    { name = "Touri" }
+    { name = "TouristicAsp44" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -22,6 +22,11 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/TouristicAsp44/Arma3-SQF-review"
+Repository = "https://github.com/TouristicAsp44/Arma3-SQF-review"
+Issues = "https://github.com/TouristicAsp44/Arma3-SQF-review/issues"
 
 [project.optional-dependencies]
 linter = [

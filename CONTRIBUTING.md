@@ -8,7 +8,7 @@
 
 1. **Clonar el repositorio**:
    ```bash
-   git clone https://github.com/usuario/arma3-sqf-review.git
+   git clone https://github.com/TouristicAsp44/Arma3-SQF-review.git
    cd arma3-sqf-review
    ```
 

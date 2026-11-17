@@ -133,7 +133,7 @@ python skills/arma3-sqf-review/scripts/sqf_orchestrator.py --root <raíz> --mode
 Clona o copia el repositorio dentro del directorio de plugins de Antigravity:
 
 ```bash
-git clone https://github.com/usuario/arma3-sqf-review.git ~/.gemini/config/plugins/arma3-sqf-review
+git clone https://github.com/TouristicAsp44/Arma3-SQF-review.git ~/.gemini/config/plugins/arma3-sqf-review
 ```
 
 ### Configuración de la Réplica Offline BIKI (Opcional)
@@ -156,6 +156,8 @@ python -m pytest tests/ -v
 
 ---
 
-## 📄 Licencia
+## 📄 Autor y Licencia
+
+Desarrollado y mantenido por **TouristicAsp44** ([@TouristicAsp44](https://github.com/TouristicAsp44)).
 
 Este proyecto está distribuido bajo los términos de la Licencia **MIT**. Consulta el archivo [LICENSE](LICENSE) para más detalles.
